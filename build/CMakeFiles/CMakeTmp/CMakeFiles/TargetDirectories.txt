@@ -1,0 +1,3 @@
+D:/workstation/GitHub/SmallDesktopDisplay_PIO/build/CMakeFiles/CMakeTmp/CMakeFiles/cmTC_803b3.dir
+D:/workstation/GitHub/SmallDesktopDisplay_PIO/build/CMakeFiles/CMakeTmp/CMakeFiles/edit_cache.dir
+D:/workstation/GitHub/SmallDesktopDisplay_PIO/build/CMakeFiles/CMakeTmp/CMakeFiles/rebuild_cache.dir
