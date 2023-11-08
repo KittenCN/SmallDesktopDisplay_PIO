@@ -55,12 +55,12 @@ CMAKE_BINARY_DIR = D:\workstation\GitHub\SmallDesktopDisplay_PIO\build\CMakeFile
 # Directory level rules for the build root directory
 
 # The main recursive "all" target.
-all: CMakeFiles/cmTC_803b3.dir/all
+all: CMakeFiles/cmTC_c9c2f.dir/all
 
 .PHONY : all
 
 # The main recursive "clean" target.
-clean: CMakeFiles/cmTC_803b3.dir/clean
+clean: CMakeFiles/cmTC_c9c2f.dir/clean
 
 .PHONY : clean
 
@@ -70,31 +70,31 @@ preinstall:
 .PHONY : preinstall
 
 #=============================================================================
-# Target rules for target CMakeFiles/cmTC_803b3.dir
+# Target rules for target CMakeFiles/cmTC_c9c2f.dir
 
 # All Build rule for target.
-CMakeFiles/cmTC_803b3.dir/all:
-	$(MAKE) -f CMakeFiles\cmTC_803b3.dir\build.make CMakeFiles/cmTC_803b3.dir/depend
-	$(MAKE) -f CMakeFiles\cmTC_803b3.dir\build.make CMakeFiles/cmTC_803b3.dir/build
-	@$(CMAKE_COMMAND) -E cmake_echo_color --switch=$(COLOR) --progress-dir=D:\workstation\GitHub\SmallDesktopDisplay_PIO\build\CMakeFiles\CMakeTmp\CMakeFiles --progress-num=1,2 "Built target cmTC_803b3"
-.PHONY : CMakeFiles/cmTC_803b3.dir/all
+CMakeFiles/cmTC_c9c2f.dir/all:
+	$(MAKE) -f CMakeFiles\cmTC_c9c2f.dir\build.make CMakeFiles/cmTC_c9c2f.dir/depend
+	$(MAKE) -f CMakeFiles\cmTC_c9c2f.dir\build.make CMakeFiles/cmTC_c9c2f.dir/build
+	@$(CMAKE_COMMAND) -E cmake_echo_color --switch=$(COLOR) --progress-dir=D:\workstation\GitHub\SmallDesktopDisplay_PIO\build\CMakeFiles\CMakeTmp\CMakeFiles --progress-num=1,2 "Built target cmTC_c9c2f"
+.PHONY : CMakeFiles/cmTC_c9c2f.dir/all
 
 # Build rule for subdir invocation for target.
-CMakeFiles/cmTC_803b3.dir/rule:
+CMakeFiles/cmTC_c9c2f.dir/rule:
 	$(CMAKE_COMMAND) -E cmake_progress_start D:\workstation\GitHub\SmallDesktopDisplay_PIO\build\CMakeFiles\CMakeTmp\CMakeFiles 2
-	$(MAKE) -f CMakeFiles\Makefile2 CMakeFiles/cmTC_803b3.dir/all
+	$(MAKE) -f CMakeFiles\Makefile2 CMakeFiles/cmTC_c9c2f.dir/all
 	$(CMAKE_COMMAND) -E cmake_progress_start D:\workstation\GitHub\SmallDesktopDisplay_PIO\build\CMakeFiles\CMakeTmp\CMakeFiles 0
-.PHONY : CMakeFiles/cmTC_803b3.dir/rule
+.PHONY : CMakeFiles/cmTC_c9c2f.dir/rule
 
 # Convenience name for target.
-cmTC_803b3: CMakeFiles/cmTC_803b3.dir/rule
+cmTC_c9c2f: CMakeFiles/cmTC_c9c2f.dir/rule
 
-.PHONY : cmTC_803b3
+.PHONY : cmTC_c9c2f
 
 # clean rule for target.
-CMakeFiles/cmTC_803b3.dir/clean:
-	$(MAKE) -f CMakeFiles\cmTC_803b3.dir\build.make CMakeFiles/cmTC_803b3.dir/clean
-.PHONY : CMakeFiles/cmTC_803b3.dir/clean
+CMakeFiles/cmTC_c9c2f.dir/clean:
+	$(MAKE) -f CMakeFiles\cmTC_c9c2f.dir\build.make CMakeFiles/cmTC_c9c2f.dir/clean
+.PHONY : CMakeFiles/cmTC_c9c2f.dir/clean
 
 #=============================================================================
 # Special targets to cleanup operation of make.

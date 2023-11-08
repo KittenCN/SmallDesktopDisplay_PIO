@@ -99,6 +99,7 @@ void saveTDKeytoEEP(String td_api_key);
 void readTDKeyfromEEP();
 void openWifi();
 void closeWifi();
+void reflashTime();
 
 //创建时间更新函数线程
 Thread reflash_time = Thread();
@@ -515,6 +516,7 @@ void Serial_set()
       }
       else if (SMOD == "0x07"){
         getNtpTime();
+        reflashTime();
       }
       else
       {
