@@ -95,6 +95,10 @@ void scrollBanner();
 void weaterData(String *cityDZ, String *dataSK, String *dataFC); //天气信息写到屏幕上
 void refresh_AnimatedImage();                                    //更新右下角
 void getTD();
+void saveTDKeytoEEP(String td_api_key);
+void readTDKeyfromEEP();
+void openWifi();
+void closeWifi();
 
 //创建时间更新函数线程
 Thread reflash_time = Thread();
@@ -450,6 +454,25 @@ void Serial_set()
       else
         Serial.println("更新时间太长，请重新设置（1-60）");
     }
+    if (SMOD == "0x06")
+    {
+      if (incomingByte.length() == 32)
+      {
+        saveTDKeytoEEP(incomingByte);
+        SMOD = "";
+        Serial.println("TD KEY设置成功");
+        delay(5);
+        readTDKeyfromEEP();
+        delay(5);
+        Serial.print("TD KEY:");
+        Serial.println(TD_key);
+        getTD();
+      }
+      else
+      {
+        Serial.println("TD KEY设置失败");
+      }
+    }
     else
     {
       SMOD = incomingByte;
@@ -484,6 +507,12 @@ void Serial_set()
         SMOD = "";
         ESP.restart();
       }
+      else if (SMOD == "0x06"){
+        Serial.println("请输入TD_KEY：");
+      }
+      else if (SMOD == "0x99"){
+        ESP.restart();
+      }
       else
       {
         Serial.println("");
@@ -493,6 +522,8 @@ void Serial_set()
         Serial.println("屏幕方向设置输入    0x03");
         Serial.println("更改天气更新时间    0x04");
         Serial.println("重置WiFi(会重启)    0x05");
+        Serial.println("输入TD KEY         0x06");
+        Serial.println("重启设备            0x99");
         Serial.println("");
       }
     }
@@ -848,6 +879,17 @@ void getCityWeater()
 
 String HTTPS_request(String host, String url, String parameter = "", String fingerprint = "", int Port = 443, int Receive_cache = 1024)
 {
+    if (WiFi.status() != WL_CONNECTED)
+    {
+        Serial.println("WiFi未连接！");
+        WiFi.begin(wificonf.stassid, wificonf.stapsw);
+        while (WiFi.status() != WL_CONNECTED)
+        {
+            delay(500);
+            Serial.print(".");
+        }
+        Serial.println("WiFi连接成功！");
+    }
     WiFiClientSecure HTTPS; //建立WiFiClientSecure对象
     if (parameter != "")
         parameter = "?" + parameter;
@@ -863,7 +905,7 @@ String HTTPS_request(String host, String url, String parameter = "", String fing
     }
     int cache = sizeof(postRequest) + 10;
     Serial.print("发送缓存：");
-    Serial.println(postRequest);
+    // Serial.println(postRequest);
     HTTPS.setBufferSizes(Receive_cache, cache); //接收和发送缓存大小
     HTTPS.setTimeout(15000);                    //设置等待的最大毫秒数
     Serial.println("初始化参数完毕！\n开始连接服务器==>>>>>");
@@ -876,18 +918,17 @@ String HTTPS_request(String host, String url, String parameter = "", String fing
     }
     else
         Serial.println("服务器连接成功！\r");
-    Serial.println("发送请求：\n" + postRequest);
+    Serial.println("发送请求：\n");
     HTTPS.print(postRequest.c_str()); // 发送HTTP请求
 
     // 检查服务器响应信息。通过串口监视器输出服务器状态码和响应头信息
     // 从而确定ESP8266已经成功连接服务器
     Serial.println("获取响应信息========>：\r");
     Serial.println("响应头：");
-    int breakTimes = 5;
     while (HTTPS.connected())
     {
         String line = HTTPS.readStringUntil('\n');
-        Serial.println(line);
+        // Serial.println(line);
         if (line == "\r")
         {
             Serial.println("响应头输出完毕！"); // Serial.println("响应头屏蔽完毕！\r");
@@ -902,7 +943,7 @@ String HTTPS_request(String host, String url, String parameter = "", String fing
         if (line.length() > 10)
             break;
     }
-    Serial.println("响应体信息：\n" + line);
+    Serial.println("响应体信息：\n");
     Serial.println("====================================>");
     Serial.println("变量长度：" + String(line.length()));
     Serial.println("变量大小：" + String(sizeof(line)) + "字节");
@@ -924,8 +965,7 @@ void getTD() {
   String str = HTTPS_request("apis.tianapi.com", "/lunar/index", "key=" + TD_key);
 
   //如果服务器响应OK则从服务器获取响应体信息并通过串口输出
-  if (str != "0") {
-    Serial.println(str);
+  if (str != "0" && str.length() != 0) {
     DynamicJsonDocument doc(str.length() * 2);
     deserializeJson(doc, str);
     JsonObject sk = doc.as<JsonObject>();
@@ -1331,9 +1371,10 @@ void WIFI_reflash_All()
       getNtpTime();
       //其他需要联网的方法写在后面
 
-      WiFi.forceSleepBegin(); // Wifi Off
-      Serial.println("WIFI sleep......");
-      Wifi_en = 0;
+      // WiFi.forceSleepBegin(); // Wifi Off
+      // Serial.println("WIFI sleep......");
+      // Wifi_en = 0;
+      closeWifi();
     }
     else
     {
@@ -1348,6 +1389,13 @@ void openWifi()
   Serial.println("WIFI reset......");
   WiFi.forceSleepWake(); // wifi on
   Wifi_en = 1;
+}
+
+void closeWifi()
+{
+  WiFi.forceSleepBegin(); // Wifi Off
+  Serial.println("WIFI sleep......");
+  Wifi_en = 0;
 }
 
 // 强制屏幕刷新
@@ -1475,16 +1523,15 @@ void setup()
   TJpgDec.drawJpg(15, 213, humidity, sizeof(humidity));       //湿度图标
 
   getCityWeater();
-  getTD();
 #if DHT_EN
   if (DHT_img_flag != 0)
     IndoorTem();
 #endif
 
-  WiFi.forceSleepBegin(); // wifi off
-  Serial.println("WIFI休眠......");
-  Wifi_en = 0;
-
+  // WiFi.forceSleepBegin(); // wifi off
+  // Serial.println("WIFI休眠......");
+  // Wifi_en = 0;
+  closeWifi();
   reflash_time.setInterval(300); //设置所需间隔 100毫秒
   reflash_time.onRun(reflashTime);
 
