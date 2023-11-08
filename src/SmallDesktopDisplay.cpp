@@ -513,6 +513,9 @@ void Serial_set()
       else if (SMOD == "0x99"){
         ESP.restart();
       }
+      else if (SMOD == "0x07"){
+        getNtpTime();
+      }
       else
       {
         Serial.println("");
@@ -523,6 +526,7 @@ void Serial_set()
         Serial.println("更改天气更新时间    0x04");
         Serial.println("重置WiFi(会重启)    0x05");
         Serial.println("输入TD KEY         0x06");
+        Serial.println("重置时间            0x07");
         Serial.println("重启设备            0x99");
         Serial.println("");
       }
