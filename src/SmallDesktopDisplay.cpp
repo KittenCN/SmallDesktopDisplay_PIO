@@ -966,6 +966,14 @@ String HTTPS_request(String host, String url, String parameter = "", String fing
   return line;
 }
 
+String TD_gregoriandate = "1900-01-01";
+String TD_gregoriandate_year = "1900";
+String TD_gregoriandate_month = "01";
+String TD_gregoriandate_day = "01";
+String TD_lunardate = "1900-01-01";
+String TD_lunardate_year = "1900";
+String TD_lunardate_month = "01";
+String TD_lunardate_day = "01";
 String TD_year = "year";
 String TD_month = "month";
 String TD_day = "day";
@@ -976,13 +984,21 @@ String TD_zodiac[12] = {"鼠", "牛", "虎", "兔", "龙", "蛇",
                         "马", "羊", "猴", "鸡", "狗", "猪"};
 String TD_Earthly_Branches[12] = {"子", "丑", "寅", "卯", "辰", "巳",
                                   "午", "未", "申", "酉", "戌", "亥"};
-String full_zodiac(String zodiac){
+String TD_jieqi = "";
+String full_zodiac(const String& zodiac){
   for (int i = 0; i < 12; ++i){
     if (zodiac == TD_zodiac[i]){
       return TD_Earthly_Branches[i] + zodiac;
     }
   }
   return zodiac;
+}
+void splitDate(const String& date, String& year, String& month, String& day) {
+    int firstDash = date.indexOf('-');
+    int secondDash = date.lastIndexOf('-');
+    year = date.substring(0, firstDash);
+    month = date.substring(firstDash + 1, secondDash);
+    day = date.substring(secondDash + 1);
 }
 void getTD()
 {
@@ -995,6 +1011,10 @@ void getTD()
     DynamicJsonDocument doc(str.length() * 2);
     deserializeJson(doc, str);
     JsonObject sk = doc.as<JsonObject>();
+    TD_gregoriandate = sk["result"]["gregoriandate"].as<String>();
+    splitDate(TD_gregoriandate, TD_gregoriandate_year, TD_gregoriandate_month, TD_gregoriandate_day);
+    TD_lunardate = sk["result"]["lunardate"].as<String>();
+    splitDate(TD_lunardate, TD_lunardate_year, TD_lunardate_month, TD_lunardate_day);
     TD_year = sk["result"]["tiangandizhiyear"].as<String>();
     TD_month = sk["result"]["tiangandizhimonth"].as<String>();
     TD_day = sk["result"]["tiangandizhiday"].as<String>();
@@ -1002,6 +1022,7 @@ void getTD()
     TD_animal = full_zodiac(TD_animal);
     TD_lubarmonth = sk["result"]["lubarmonth"].as<String>();
     TD_lunarday = sk["result"]["lunarday"].as<String>();
+    TD_jieqi = sk["result"]["jieqi"].as<String>();
     Serial.println("获取成功");
   }
   else
@@ -1012,7 +1033,7 @@ void getTD()
 
 String scrollText[7];
 // int scrollTextWidth = 0;
-String strTDDate[3];
+String strTDDate[5];
 
 // 天气信息写到屏幕上
 void weaterData(String *cityDZ, String *dataSK, String *dataFC)
@@ -1265,9 +1286,11 @@ void digitalClockDisplay(int reflash_en = 0)
   if (reflash_en == 1)
     reflash_en = 0;
   /***日期****/
-  strTDDate[0] = String(monthDay()) + " " + String(week());
-  strTDDate[1] = TD_lubarmonth + " " + TD_lunarday + " " + TD_animal;
-  strTDDate[2] = TD_year + " " + TD_month + " " + TD_day;
+  strTDDate[0] = "公历 " + String(TD_gregoriandate_year) + "年";
+  strTDDate[1] = String(monthDay()) + " " + String(week());
+  strTDDate[2] = "农历 " + String(TD_lunardate_year) + "年 " + TD_animal;
+  strTDDate[3] = TD_lubarmonth + " " + TD_lunarday + " " + TD_jieqi;
+  strTDDate[4] = TD_year + " " + TD_month + " " + TD_day;
   /***日期****/
 }
 
@@ -1289,7 +1312,7 @@ void TDBanner()
     clk.deleteSprite();
     clk.unloadFont();
 
-    if (currentTDIndex >= 2)
+    if (currentTDIndex >= 4)
       currentTDIndex = 0; // 回第一个
     else
       currentTDIndex += 1; // 准备切换到下一个
