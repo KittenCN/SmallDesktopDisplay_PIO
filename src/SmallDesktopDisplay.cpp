@@ -972,7 +972,18 @@ String TD_day = "day";
 String TD_animal = "animal";
 String TD_lubarmonth = "lubarmonth";
 String TD_lunarday = "lunarday";
-
+String TD_zodiac[12] = {"鼠", "牛", "虎", "兔", "龙", "蛇",
+                        "马", "羊", "猴", "鸡", "狗", "猪"};
+String TD_Earthly_Branches[12] = {"子", "丑", "寅", "卯", "辰", "巳",
+                                  "午", "未", "申", "酉", "戌", "亥"};
+String full_zodiac(String zodiac){
+  for (int i = 0; i < 12; ++i){
+    if (zodiac == TD_zodiac[i]){
+      return TD_Earthly_Branches[i] + zodiac;
+    }
+  }
+  return zodiac;
+}
 void getTD()
 {
   // String URL = "https://apis.tianapi.com/lunar/index?key=" + TD_key;
@@ -988,6 +999,7 @@ void getTD()
     TD_month = sk["result"]["tiangandizhimonth"].as<String>();
     TD_day = sk["result"]["tiangandizhiday"].as<String>();
     TD_animal = sk["result"]["shengxiao"].as<String>();
+    TD_animal = full_zodiac(TD_animal);
     TD_lubarmonth = sk["result"]["lubarmonth"].as<String>();
     TD_lunarday = sk["result"]["lunarday"].as<String>();
     Serial.println("获取成功");
