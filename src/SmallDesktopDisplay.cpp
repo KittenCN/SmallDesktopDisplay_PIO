@@ -1102,12 +1102,12 @@ void weaterData(String *cityDZ, String *dataSK, String *dataFC)
   humidityWin();
 
   // 城市名称
-  clk.createSprite(94, 30);
+  clk.createSprite(70, 30);
   clk.fillSprite(bgColor);
   clk.setTextDatum(CC_DATUM);
   clk.setTextColor(TFT_WHITE, bgColor);
   clk.drawString(sk["cityname"].as<String>(), 44, 16);
-  clk.pushSprite(15, 15);
+  clk.pushSprite(5, 15);
   clk.deleteSprite();
 
   // PM2.5空气指数
@@ -1120,38 +1120,38 @@ void weaterData(String *cityDZ, String *dataSK, String *dataFC)
     pm25BgColor = tft.color565(136, 11, 32); // 重度
     aqiTxt = "重度";
   }
-  else if (pm25V > 150)
+  else if (pm25V > 75)
   {
     pm25BgColor = tft.color565(186, 55, 121); // 中度
     aqiTxt = "中度";
   }
-  else if (pm25V > 100)
+  else if (pm25V > 50)
   {
     pm25BgColor = tft.color565(242, 159, 57); // 轻
     aqiTxt = "轻度";
   }
-  else if (pm25V > 50)
+  else if (pm25V > 25)
   {
     pm25BgColor = tft.color565(247, 219, 100); // 良
     aqiTxt = "良";
   }
-  else if (pm25V <= 50)
+  else if (pm25V <= 25)
   {
     pm25BgColor = tft.color565(156, 202, 127); // 优
     aqiTxt = "优";
   }
   aqiTxt = aqiTxt + strOtherAqiInfo;
-  clk.createSprite(66, 24);
+  clk.createSprite(85, 24);
   clk.fillSprite(bgColor);
-  clk.fillRoundRect(0, 0, 60, 24, 4, pm25BgColor);
+  clk.fillRoundRect(0, 0, 85, 24, 4, pm25BgColor);
   clk.setTextDatum(CC_DATUM);
   clk.setTextColor(0x0000);
-  clk.drawString(aqiTxt, 25, 13);
-  clk.pushSprite(94, 18);
+  clk.drawString(aqiTxt, 40, 13);
+  clk.pushSprite(80, 18);
   clk.deleteSprite();
 
   scrollText[0] = "实时天气 " + sk["weather"].as<String>();
-  scrollText[1] = "空气质量 " + aqiTxt;
+  scrollText[1] = "AQI " + aqiTxt;
   scrollText[2] = "风向 " + sk["WD"].as<String>() + sk["WS"].as<String>();
 
   // scrollText[6] = atoi((sk["weathercode"].as<String>()).substring(1,3).c_str()) ;
@@ -1199,7 +1199,7 @@ void scrollBanner()
     clkb.setTextDatum(CC_DATUM);
     clkb.setTextColor(TFT_WHITE, bgColor);
     clkb.drawString(scrollText[currentIndex], 74, 16);
-    clkb.pushSprite(10, 45);
+    clkb.pushSprite(5, 45);
 
     clkb.deleteSprite();
     clkb.unloadFont();
