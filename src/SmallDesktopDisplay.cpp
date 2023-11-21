@@ -918,38 +918,38 @@ String HTTPS_request(String host, String url, String parameter = "", String fing
     HTTPS.setFingerprint(fingerprint.c_str()); // 服务器证书指纹进行服务器身份认证
   }
   int cache = sizeof(postRequest) + 10;
-  Serial.print("发送缓存：");
+  // Serial.print("发送缓存：");
   // Serial.println(postRequest);
   HTTPS.setBufferSizes(Receive_cache, cache); // 接收和发送缓存大小
   HTTPS.setTimeout(15000);                    // 设置等待的最大毫秒数
-  Serial.println("初始化参数完毕！\n开始连接服务器==>>>>>");
+  // Serial.println("初始化参数完毕！\n开始连接服务器==>>>>>");
   if (!HTTPS.connect(host, Port))
   {
     delay(100);
-    Serial.println();
-    Serial.println("服务器连接失败！");
+    // Serial.println();
+    // Serial.println("服务器连接失败！");
     return "0";
   }
-  else
-    Serial.println("服务器连接成功！\r");
-  Serial.println("发送请求：\n");
+  // else
+  //   Serial.println("服务器连接成功！\r");
+  // Serial.println("发送请求：\n");
   HTTPS.print(postRequest.c_str()); // 发送HTTP请求
 
   // 检查服务器响应信息。通过串口监视器输出服务器状态码和响应头信息
   // 从而确定ESP8266已经成功连接服务器
-  Serial.println("获取响应信息========>：\r");
-  Serial.println("响应头：");
+  // Serial.println("获取响应信息========>：\r");
+  // Serial.println("响应头：");
   while (HTTPS.connected())
   {
     String line = HTTPS.readStringUntil('\n');
     // Serial.println(line);
     if (line == "\r")
     {
-      Serial.println("响应头输出完毕！"); // Serial.println("响应头屏蔽完毕！\r");
+      // Serial.println("响应头输出完毕！"); // Serial.println("响应头屏蔽完毕！\r");
       break;
     }
   }
-  Serial.println("截取响应体==========>");
+  // Serial.println("截取响应体==========>");
   String line;
   while (HTTPS.connected())
   {
@@ -957,11 +957,11 @@ String HTTPS_request(String host, String url, String parameter = "", String fing
     if (line.length() > 10)
       break;
   }
-  Serial.println("响应体信息：\n");
-  Serial.println("====================================>");
-  Serial.println("变量长度：" + String(line.length()));
-  Serial.println("变量大小：" + String(sizeof(line)) + "字节");
-  Serial.println("====================================>");
+  // Serial.println("响应体信息：\n");
+  // Serial.println("====================================>");
+  // Serial.println("变量长度：" + String(line.length()));
+  // Serial.println("变量大小：" + String(sizeof(line)) + "字节");
+  // Serial.println("====================================>");
   HTTPS.stop(); // 操作结束，断开服务器连接
   delay(500);
   return line;
