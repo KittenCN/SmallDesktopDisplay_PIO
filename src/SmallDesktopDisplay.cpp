@@ -111,11 +111,11 @@ Thread reflash_openWifi = Thread();
 // 创建动画绘制线程
 Thread reflash_Animate = Thread();
 
-// 创建协程池
-StaticThreadController<4> controller(&reflash_time, &reflash_Banner, &reflash_openWifi, &reflash_Animate);
-
 // 联网后所有需要更新的数据
 Thread WIFI_reflash = Thread();
+
+// 创建协程池
+StaticThreadController<4> controller(&reflash_time, &reflash_Banner, &reflash_openWifi, &reflash_Animate);
 
 /* *****************************************************************
  *  参数设置
@@ -1114,6 +1114,14 @@ void weaterData(String *cityDZ, String *dataSK, String *dataFC)
   uint16_t pm25BgColor = tft.color565(156, 202, 127); // 优
   String aqiTxt = "优";
   int pm25V = sk["aqi"];
+  int err_times = 0;
+  while (pm25V == 0 && err_times <= 5)
+  {
+    delay(100);
+    getCityWeater();
+    pm25V = sk["aqi"];
+    err_times++;
+  }
   String strOtherAqiInfo = " " + String(int(pm25V)) + "";
   if (pm25V > 200)
   {
@@ -1261,6 +1269,17 @@ void digitalClockDisplay(int reflash_en = 0)
   int now_hour = hour();     // 获取小时
   int now_minute = minute(); // 获取分钟
   int now_second = second(); // 获取秒针
+
+  int err_times = 0;
+  while (now_hour == 0 && now_minute == 0 && now_second == 0 && err_times <= 5){
+    delay(100);
+    err_times++;
+    getNtpTime();
+    now_hour = hour();     // 获取小时
+    now_minute = minute(); // 获取分钟
+    now_second = second(); // 获取秒针
+  }
+
   // 小时刷新
   if ((now_hour != Hour_sign) || (reflash_en == 1))
   {
@@ -1329,7 +1348,7 @@ byte packetBuffer[NTP_PACKET_SIZE]; // buffer to hold incoming & outgoing packet
 time_t getNtpTime()
 {
   IPAddress ntpServerIP; // NTP server's ip address
-
+  bool err_flag = false;
   while (Udp.parsePacket() > 0)
     ; // discard any previously received packets
   // Serial.println("Transmit NTP Request");
@@ -1356,8 +1375,21 @@ time_t getNtpTime()
       // Serial.println(secsSince1900 - 2208988800UL + timeZone * SECS_PER_HOUR);
       return secsSince1900 - 2208988800UL + timeZone * SECS_PER_HOUR;
     }
+    else if (err_flag == false){
+      err_flag = true;
+      Serial.println("No NTP Response :-( " + String(size) + ' ' + String(ntpServerName) + ' ' + ntpServerIP.toString());
+      if (size > 0){
+        Udp.read(packetBuffer, size);
+        for(int i = 0; i < size; i++) {
+            Serial.print(packetBuffer[i], HEX);
+            Serial.print(" ");
+        }
+        Serial.println();
+      }
+    }
   }
   Serial.println("No NTP Response :-(");
+  Serial.println("Time Diff:" + String(millis() - beginWait));
   return 0; // 无法获取时间时返回0
 }
 
@@ -1453,6 +1485,7 @@ void openWifi()
   Serial.println("WIFI reset......");
   WiFi.forceSleepWake(); // wifi on
   Wifi_en = 1;
+  WIFI_reflash_All();
 }
 
 void closeWifi()
@@ -1488,7 +1521,6 @@ void setup()
   EEPROM.begin(1024);
   // WiFi.forceSleepWake();
   // wm.resetSettings();    //在初始化中使wifi重置，需重新配置WiFi
-
 #if DHT_EN
   dht.begin();
   // 从eeprom读取DHT传感器使能标志
