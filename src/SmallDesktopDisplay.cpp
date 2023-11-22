@@ -1402,7 +1402,7 @@ byte packetBuffer[NTP_PACKET_SIZE]; // buffer to hold incoming & outgoing packet
 time_t getNtpTime()
 {
   IPAddress ntpServerIP; // NTP server's ip address
-  bool err_flag = false;
+  int err_flag = 0;
   while (Udp.parsePacket() > 0)
     ; // discard any previously received packets
   // mySerialPrintln("Transmit NTP Request");
@@ -1429,21 +1429,23 @@ time_t getNtpTime()
       // mySerialPrintln(secsSince1900 - 2208988800UL + timeZone * SECS_PER_HOUR);
       return secsSince1900 - 2208988800UL + timeZone * SECS_PER_HOUR;
     }
-    else if (err_flag == false){
-      err_flag = true;
-      mySerialPrintln("No NTP Response :-( " + String(size) + ' ' + String(ntpServerName) + ' ' + ntpServerIP.toString());
-      if (size > 0){
-        Udp.read(packetBuffer, size);
-        for(int i = 0; i < size; i++) {
-            mySerialPrint(packetBuffer[i], HEX);
-            mySerialPrint(" ");
+    else {
+      err_flag++;
+      if (err_flag == 5){
+        mySerialPrintln("No NTP Response :-( " + String(size) + ' ' + String(ntpServerName) + ' ' + ntpServerIP.toString());
+        if (size > 0){
+          Udp.read(packetBuffer, size);
+          for(int i = 0; i < size; i++) {
+              mySerialPrint(packetBuffer[i], HEX);
+              mySerialPrint(" ");
+          }
+          mySerialPrintln();
         }
-        mySerialPrintln();
       }
     }
   }
-  mySerialPrintln("No NTP Response :-(");
-  mySerialPrintln("Time Diff:" + String(millis() - beginWait));
+  mySerialPrint("No NTP Response :-( ");
+  mySerialPrintln("Time Diff: " + String(millis() - beginWait));
   return 0; // 无法获取时间时返回0
 }
 
