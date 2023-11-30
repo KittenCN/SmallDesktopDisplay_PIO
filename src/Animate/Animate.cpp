@@ -9,6 +9,8 @@ int Animate_key = -1; //初始化图标显示帧数
 #include "img/astronaut.h"
 #elif Animate_Choice == 2
 #include "img/hutao.h"
+#elif Animate_Choice == 3
+#include "img/miku.h"
 #endif
 
 void imgAnim(const uint8_t **Animate_value, uint32_t *Animate_size)
@@ -20,7 +22,7 @@ void imgAnim(const uint8_t **Animate_value, uint32_t *Animate_size)
 //太空人起飞
 #if Animate_Choice == 1
     *Animate_value = astronaut[Animate_key];
-    *Animate_size = astronaut[Animate_key];
+    *Animate_size = astronaut_size[Animate_key];
     if (Animate_key >= 9)
         Animate_key = -1;
 //胡桃摇
@@ -28,6 +30,12 @@ void imgAnim(const uint8_t **Animate_value, uint32_t *Animate_size)
     *Animate_value = hutao[Animate_key];
     *Animate_size = hutao_size[Animate_key];
     if (Animate_key >= 31)
+        Animate_key = -1;
+//初音未来
+#elif Animater_Choice == 3
+    *Animate_value = miku[Animate_key];
+    *Animate_size = miku_size[Animate_key];
+    if (Animate_key >= 3)
         Animate_key = -1;
 #endif
 }
