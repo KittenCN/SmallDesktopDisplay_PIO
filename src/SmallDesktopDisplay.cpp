@@ -1710,6 +1710,7 @@ void refresh_AnimatedImage()
       Amimate_reflash_Time = millis();
       imgAnim(&Animate_value, &Animate_size);
       TJpgDec.drawJpg(160, 160, Animate_value, Animate_size);
+      // TJpgDec.drawJpg(160, 160, Animate_value, sizeof(Animate_value));
     }
   }
 #endif

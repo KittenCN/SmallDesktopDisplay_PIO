@@ -102,8 +102,8 @@ def write_to_h(path, file_name):
         return re_str, foot_str, foot_sizestr
 
     os_list = os.listdir(path)
-    foot_str = f"const uint8_t *{file_name}aut[{len(os_list)}] PROGMEM " + "{"
-    foot_sizestr = f"const uint32_t {file_name}aut_size[{len(os_list)}] PROGMEM " + "{"
+    foot_str = f"const uint8_t *{file_name}[{len(os_list)}] PROGMEM " + "{"
+    foot_sizestr = f"const uint32_t {file_name}_size[{len(os_list)}] PROGMEM " + "{"
     with open(f"{local_path}{file_name}.h",'w') as a:
         a.write("#include <pgmspace.h> \n")
         for i in os_list:
@@ -136,3 +136,7 @@ if __name__ == "__main__":
     # 把GIF放到py文件旁边。默认只支持正方形的图片，不是正方形的自己改图片大小
     file_name = "miku.gif"
     init(file_name)
+    # file_name = file_name.split(".")[0]
+    # path = local_path + f"imgs/{file_name}/"
+    # print("文件名", file_name)
+    # write_to_h(f"{path}/jpg/", file_name)

@@ -32,7 +32,7 @@ void imgAnim(const uint8_t **Animate_value, uint32_t *Animate_size)
     if (Animate_key >= 31)
         Animate_key = -1;
 //初音未来
-#elif Animater_Choice == 3
+#elif Animate_Choice == 3
     *Animate_value = miku[Animate_key];
     *Animate_size = miku_size[Animate_key];
     if (Animate_key >= 3)
