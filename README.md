@@ -5,7 +5,7 @@
 **视频介绍：** https://www.bilibili.com/video/BV1V64y1e72M/
 
 ## MOD介绍：
-1. 增加天干地支显示（需要注册天聚数行（www.tianapi.com），并获取免费的key供模块使用）
+1. 增加天干地支显示（需要注册天聚数行，并获取免费的key供模块使用）www.tianapi.com
 2. 增加阴历显示
 3. 修改AQI显示内容，调整AQI等级（参照美国标准）
 4. 增加HTTPS链接模块
