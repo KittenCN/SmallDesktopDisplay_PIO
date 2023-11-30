@@ -1,5 +1,5 @@
-// ArduinoJson - arduinojson.org
-// Copyright Benoit Blanchon 2014-2020
+// ArduinoJson - https://arduinojson.org
+// Copyright © 2014-2023, Benoit BLANCHON
 // MIT License
 
 #pragma once
@@ -12,13 +12,13 @@
 // we choose to ignore the problem to reduce the size of the code
 // Garbage in => Garbage out
 #if defined(__GNUC__)
-#if __GNUC__ >= 7
-#pragma GCC diagnostic push
-#pragma GCC diagnostic ignored "-Wmaybe-uninitialized"
-#endif
+#  if __GNUC__ >= 7
+#    pragma GCC diagnostic push
+#    pragma GCC diagnostic ignored "-Wmaybe-uninitialized"
+#  endif
 #endif
 
-namespace ARDUINOJSON_NAMESPACE {
+ARDUINOJSON_BEGIN_PRIVATE_NAMESPACE
 
 namespace Utf16 {
 inline bool isHighSurrogate(uint16_t codeunit) {
@@ -31,37 +31,37 @@ inline bool isLowSurrogate(uint16_t codeunit) {
 
 class Codepoint {
  public:
-  Codepoint() : _highSurrogate(0) {}
+  Codepoint() : highSurrogate_(0), codepoint_(0) {}
 
   bool append(uint16_t codeunit) {
     if (isHighSurrogate(codeunit)) {
-      _highSurrogate = codeunit & 0x3FF;
+      highSurrogate_ = codeunit & 0x3FF;
       return false;
     }
 
     if (isLowSurrogate(codeunit)) {
-      _codepoint =
-          uint32_t(0x10000 + ((_highSurrogate << 10) | (codeunit & 0x3FF)));
+      codepoint_ =
+          uint32_t(0x10000 + ((highSurrogate_ << 10) | (codeunit & 0x3FF)));
       return true;
     }
 
-    _codepoint = codeunit;
+    codepoint_ = codeunit;
     return true;
   }
 
   uint32_t value() const {
-    return _codepoint;
+    return codepoint_;
   }
 
  private:
-  uint16_t _highSurrogate;
-  uint32_t _codepoint;
+  uint16_t highSurrogate_;
+  uint32_t codepoint_;
 };
 }  // namespace Utf16
-}  // namespace ARDUINOJSON_NAMESPACE
+ARDUINOJSON_END_PRIVATE_NAMESPACE
 
 #if defined(__GNUC__)
-#if __GNUC__ >= 8
-#pragma GCC diagnostic pop
-#endif
+#  if __GNUC__ >= 8
+#    pragma GCC diagnostic pop
+#  endif
 #endif

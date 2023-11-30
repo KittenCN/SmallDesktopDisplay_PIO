@@ -1,5 +1,5 @@
-// ArduinoJson - arduinojson.org
-// Copyright Benoit Blanchon 2014-2020
+// ArduinoJson - https://arduinojson.org
+// Copyright © 2014-2023, Benoit BLANCHON
 // MIT License
 
 #pragma once
@@ -7,11 +7,11 @@
 #include "type_traits.hpp"
 
 #ifdef _MSC_VER
-#pragma warning(push)
-#pragma warning(disable : 4310)
+#  pragma warning(push)
+#  pragma warning(disable : 4310)
 #endif
 
-namespace ARDUINOJSON_NAMESPACE {
+ARDUINOJSON_BEGIN_PRIVATE_NAMESPACE
 
 // Differs from standard because we can't use the symbols "min" and "max"
 template <typename T, typename Enable = void>
@@ -38,8 +38,8 @@ struct numeric_limits<
   }
 };
 
-}  // namespace ARDUINOJSON_NAMESPACE
+ARDUINOJSON_END_PRIVATE_NAMESPACE
 
 #ifdef _MSC_VER
-#pragma warning(pop)
+#  pragma warning(pop)
 #endif

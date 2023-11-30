@@ -1,5 +1,5 @@
-// ArduinoJson - arduinojson.org
-// Copyright Benoit Blanchon 2014-2020
+// ArduinoJson - https://arduinojson.org
+// Copyright © 2014-2023, Benoit BLANCHON
 // MIT License
 
 #pragma once
@@ -10,17 +10,17 @@
 #include <ArduinoJson/Polyfills/ctype.hpp>
 #include <ArduinoJson/Polyfills/math.hpp>
 #include <ArduinoJson/Polyfills/type_traits.hpp>
-#include <ArduinoJson/Variant/VariantAs.hpp>
+#include <ArduinoJson/Variant/Converter.hpp>
 #include <ArduinoJson/Variant/VariantData.hpp>
 
-namespace ARDUINOJSON_NAMESPACE {
+ARDUINOJSON_BEGIN_PRIVATE_NAMESPACE
 
 template <typename A, typename B>
 struct choose_largest : conditional<(sizeof(A) > sizeof(B)), A, B> {};
 
 inline bool parseNumber(const char* s, VariantData& result) {
-  typedef FloatTraits<Float> traits;
-  typedef choose_largest<traits::mantissa_type, UInt>::type mantissa_t;
+  typedef FloatTraits<JsonFloat> traits;
+  typedef choose_largest<traits::mantissa_type, JsonUInt>::type mantissa_t;
   typedef traits::exponent_type exponent_t;
 
   ARDUINOJSON_ASSERT(s != 0);
@@ -55,7 +55,7 @@ inline bool parseNumber(const char* s, VariantData& result) {
 
   mantissa_t mantissa = 0;
   exponent_t exponent_offset = 0;
-  const mantissa_t maxUint = UInt(-1);
+  const mantissa_t maxUint = JsonUInt(-1);
 
   while (isdigit(*s)) {
     uint8_t digit = uint8_t(*s - '0');
@@ -69,11 +69,17 @@ inline bool parseNumber(const char* s, VariantData& result) {
   }
 
   if (*s == '\0') {
-    if (is_negative)
-      result.setNegativeInteger(UInt(mantissa));
-    else
-      result.setPositiveInteger(UInt(mantissa));
-    return true;
+    if (is_negative) {
+      const mantissa_t sintMantissaMax = mantissa_t(1)
+                                         << (sizeof(JsonInteger) * 8 - 1);
+      if (mantissa <= sintMantissaMax) {
+        result.setInteger(JsonInteger(~mantissa + 1));
+        return true;
+      }
+    } else {
+      result.setInteger(JsonUInt(mantissa));
+      return true;
+    }
   }
 
   // avoid mantissa overflow
@@ -130,8 +136,8 @@ inline bool parseNumber(const char* s, VariantData& result) {
   if (*s != '\0')
     return false;
 
-  Float final_result =
-      traits::make_float(static_cast<Float>(mantissa), exponent);
+  JsonFloat final_result =
+      make_float(static_cast<JsonFloat>(mantissa), exponent);
 
   result.setFloat(is_negative ? -final_result : final_result);
   return true;
@@ -140,8 +146,7 @@ inline bool parseNumber(const char* s, VariantData& result) {
 template <typename T>
 inline T parseNumber(const char* s) {
   VariantData value;
-  value.init();  // VariantData is a POD, so it has no constructor
   parseNumber(s, value);
-  return variantAs<T>(&value);
+  return Converter<T>::fromJson(JsonVariantConst(&value));
 }
-}  // namespace ARDUINOJSON_NAMESPACE
+ARDUINOJSON_END_PRIVATE_NAMESPACE
