@@ -9,7 +9,7 @@
  * 三次  修改: 猫道
  * 讨  论  群：811058758、887171863、720661626
  * 创 建 日 期：2021.07.19
- * 最后更改日期：2023.11.13
+ * 最后更改日期：2025.2.12
  *
  *
  * 引 脚 分 配：SCK   GPIO14
@@ -456,12 +456,10 @@ void Serial_set()
         {
           mySerialPrintln("城市代码调整为：自动");
           getCityCode(); // 获取城市代码
+
         }
-        else
-        {
-          Serial.printf("城市代码调整为：");
-          mySerialPrintln(cityCode);
-        }
+        Serial.printf("城市代码调整为：");
+        mySerialPrintln(cityCode);
         mySerialPrintln("");
         getCityWeater(); // 更新城市天气
         SMOD = "";
