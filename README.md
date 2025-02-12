@@ -1,5 +1,5 @@
 # SmallDesktopDisplay
-# 基于chuxin520922作品的修改，感谢原作者的无私奉献 https://github.com/chuxin520922/SmallDesktopDisplay
+# 基于[chuxin520922作品](https://github.com/chuxin520922/SmallDesktopDisplay)的修改，感谢原作者的无私奉献 
 # 沙雕系列-SD -太空人天气时钟显示
 
 **视频介绍：** https://www.bilibili.com/video/BV1V64y1e72M/
