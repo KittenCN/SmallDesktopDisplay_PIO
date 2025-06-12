@@ -1,9 +1,9 @@
-// Fetch a file from the URL given and save it in SPIFFS
+// Fetch a file from the URL given and save it in LittleFS
 // Return 1 if a web fetch was needed or 0 if file already exists
 bool getFile(String url, String filename) {
 
   // If it exists then no need to fetch it
-  if (SPIFFS.exists(filename) == true) {
+  if (LittleFS.exists(filename) == true) {
     Serial.println("Found " + filename);
     return 0;
   }
@@ -12,18 +12,25 @@ bool getFile(String url, String filename) {
 
   // Check WiFi connection
   if ((WiFi.status() == WL_CONNECTED)) {
-    HTTPClient http;
 
     Serial.print("[HTTP] begin...\n");
 
+#ifdef ARDUINO_ARCH_ESP8266
+    std::unique_ptr<BearSSL::WiFiClientSecure>client(new BearSSL::WiFiClientSecure);
+    client -> setInsecure();
+    HTTPClient http;
+    http.begin(*client, url);
+#else
+    HTTPClient http;
     // Configure server and url
     http.begin(url);
+#endif
 
     Serial.print("[HTTP] GET...\n");
     // Start connection and send HTTP header
     int httpCode = http.GET();
-    if (httpCode > 0) {
-      fs::File f = SPIFFS.open(filename, "w+");
+    if (httpCode == 200) {
+      fs::File f = LittleFS.open(filename, "w+");
       if (!f) {
         Serial.println("file open failed");
         return 0;

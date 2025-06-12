@@ -1,7 +1,7 @@
-adafruit/Adafruit Unified Sensor@^1.1.4
-fastled/FastLED@^3.4.0
-ivanseidel/Thread@0.0.0-alpha+sha.1a4e504c5f
-bodmer/TJpg_Decoder@0.0.3
 bblanchon/ArduinoJson@^6.18.5
 adafruit/DHT sensor library@^1.4.3
+fastled/FastLED@^3.4.0
 lennarthennigs/Button2@^1.6.5
+adafruit/Adafruit Unified Sensor@^1.1.4
+ivanseidel/Thread@0.0.0-alpha+sha.1a4e504c5f
+bodmer/TJpg_Decoder@^1.0.8
