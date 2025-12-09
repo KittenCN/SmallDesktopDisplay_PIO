@@ -411,6 +411,60 @@ void Serial_set()
       incomingByte += char(Serial.read()); // 读取单个字符值，转换为字符，并按顺序一个个赋值给incomingByte
       delay(2);                            // 不能省略，因为读取缓冲区数据需要时间
     }
+
+    // 去除首尾空白与回车换行，避免比较失败
+    incomingByte.trim();
+    if (incomingByte.length() == 0) return;
+
+    // 支持一次性命令和参数，例如: "0x01 80" 或 "0x01=80"
+    int sep = incomingByte.indexOf(' ');
+    if (sep < 0) sep = incomingByte.indexOf('=');
+    if (sep < 0) sep = incomingByte.indexOf(':');
+    if (sep >= 0)
+    {
+      String cmd = incomingByte.substring(0, sep);
+      String arg = incomingByte.substring(sep + 1);
+      cmd.trim();
+      arg.trim();
+      // 直接处理常见一次性命令，避免交互两步
+      if (cmd == "0x01") // 亮度
+      {
+        int LCDBL = atoi(arg.c_str());
+        if (LCDBL >= 0 && LCDBL <= 100)
+        {
+          EEPROM.write(BL_addr, LCDBL);
+          EEPROM.commit();
+          LCD_BL_PWM = EEPROM.read(BL_addr);
+          analogWrite(LCD_BL_PIN, 1023 - (LCD_BL_PWM * 10));
+          mySerialPrintln("亮度调整为：");
+          mySerialPrintln(LCD_BL_PWM);
+        }
+        else mySerialPrintln("亮度调整错误，请输入0-100");
+        return;
+      }
+      else if (cmd == "0x02") // 城市代码一次性设置
+      {
+        int CityC = atoi(arg.c_str());
+        if (((CityC >= 101000000) && (CityC <= 102000000)) || (CityC == 0))
+        {
+          for (int cnum = 0; cnum < 5; cnum++)
+            EEPROM.write(CC_addr + cnum, CityC % 100), CityC = CityC / 100;
+          EEPROM.commit();
+          mySerialPrintln("城市代码已设置");
+          getCityWeater();
+        }
+        else mySerialPrintln("城市调整错误，请输入9位城市代码，自动获取请输入0");
+        return;
+      }
+      else if (cmd == "0x07") // 立即更新时间
+      {
+        getNtpTime();
+        reflashTime();
+        return;
+      }
+      // 其他一次性命令仍走后续交互流程
+    }
+
     if (SMOD == "0x01") // 设置1亮度设置
     {
       int LCDBL = atoi(incomingByte.c_str()); // int n = atoi(xxx.c_str());//String转int
@@ -429,6 +483,7 @@ void Serial_set()
       }
       else
         mySerialPrintln("亮度调整错误，请输入0-100");
+      return;
     }
     if (SMOD == "0x02") // 设置2地址设置
     {
@@ -439,15 +494,15 @@ void Serial_set()
         for (int cnum = 0; cnum < 5; cnum++)
         {
           EEPROM.write(CC_addr + cnum, CityC % 100); // 城市地址写入城市代码
-          EEPROM.commit();                           // 保存更改的数据
           CityC = CityC / 100;
-          delay(5);
         }
+        // 一次性提交，减少闪存擦写
+        EEPROM.commit();
+        delay(5);
         for (int cnum = 5; cnum > 0; cnum--)
         {
           CityCODE = CityCODE * 100;
           CityCODE += EEPROM.read(CC_addr + cnum - 1);
-          delay(5);
         }
 
         cityCode = CityCODE;
@@ -466,6 +521,7 @@ void Serial_set()
       }
       else
         mySerialPrintln("城市调整错误，请输入9位城市代码，自动获取请输入0");
+      return;
     }
     if (SMOD == "0x03") // 设置3屏幕显示方向
     {
@@ -490,6 +546,7 @@ void Serial_set()
       {
         mySerialPrintln("Screen orientation value is wrong, please enter a value within 0-3");
       }
+      return;
     }
     if (SMOD == "0x04") // 设置天气更新时间
     {
@@ -504,6 +561,7 @@ void Serial_set()
       }
       else
         mySerialPrintln("Update too long, please reset (1-60)");
+      return;
     }
     if (SMOD == "0x06")
     {
@@ -512,9 +570,7 @@ void Serial_set()
         saveTDKeytoEEP(incomingByte);
         SMOD = "";
         mySerialPrintln("TD KEY set successfully");
-        delay(5);
         readTDKeyfromEEP();
-        delay(5);
         mySerialPrint("TD KEY:");
         mySerialPrintln(TD_key);
         getTD();
@@ -523,68 +579,70 @@ void Serial_set()
       {
         mySerialPrintln("TD KEY setup failure");
       }
+      return;
+    }
+
+    // 如果之前没有模式，则把当前输入作为命令
+    SMOD = incomingByte;
+    delay(2);
+    // 显示对应提示信息
+    if (SMOD == "0x01")
+      mySerialPrintln("Please enter the brightness value, range 0-100");
+    else if (SMOD == "0x02")
+      mySerialPrintln("Please enter 9-digit city code, to get it automatically please enter 0");
+    else if (SMOD == "0x03")
+    {
+      mySerialPrintln("Please enter a value for the screen orientation.");
+      mySerialPrintln("0-USB port facing down");
+      mySerialPrintln("1-USB connector facing right");
+      mySerialPrintln("2-USB ports facing up");
+      mySerialPrintln("3-USB port facing left");
+    }
+    else if (SMOD == "0x04")
+    {
+      mySerialPrint("Current weather update time:");
+      mySerialPrint(updateweater_time);
+      mySerialPrintln("minutes");
+      mySerialPrintln("Please enter the weather update time (1-60) minutes");
+    }
+    else if (SMOD == "0x05")
+    {
+      mySerialPrintln("Reset WiFi settings in ......");
+      delay(10);
+      wm.resetSettings();
+      deletewificonfig();
+      delay(10);
+      mySerialPrintln("Successful WiFi setup");
+      SMOD = "";
+      ESP.restart();
+    }
+    else if (SMOD == "0x06")
+    {
+      mySerialPrintln("Please enter TD_KEY:");
+    }
+    else if (SMOD == "0x99")
+    {
+      ESP.restart();
+    }
+    else if (SMOD == "0x07")
+    {
+      getNtpTime();
+      reflashTime();
+      SMOD = "";
     }
     else
     {
-      SMOD = incomingByte;
-      delay(2);
-      if (SMOD == "0x01")
-        mySerialPrintln("Please enter the brightness value, range 0-100");
-      else if (SMOD == "0x02")
-        mySerialPrintln("Please enter 9-digit city code, to get it automatically please enter 0");
-      else if (SMOD == "0x03")
-      {
-        mySerialPrintln("Please enter a value for the screen orientation.");
-        mySerialPrintln("0-USB port facing down");
-        mySerialPrintln("1-USB connector facing right");
-        mySerialPrintln("2-USB ports facing up");
-        mySerialPrintln("3-USB port facing left");
-      }
-      else if (SMOD == "0x04")
-      {
-        mySerialPrint("Current weather update time:");
-        mySerialPrint(updateweater_time);
-        mySerialPrintln("minutes");
-        mySerialPrintln("Please enter the weather update time (1-60) minutes");
-      }
-      else if (SMOD == "0x05")
-      {
-        mySerialPrintln("Reset WiFi settings in ......");
-        delay(10);
-        wm.resetSettings();
-        deletewificonfig();
-        delay(10);
-        mySerialPrintln("Successful WiFi setup");
-        SMOD = "";
-        ESP.restart();
-      }
-      else if (SMOD == "0x06")
-      {
-        mySerialPrintln("Please enter TD_KEY:");
-      }
-      else if (SMOD == "0x99")
-      {
-        ESP.restart();
-      }
-      else if (SMOD == "0x07")
-      {
-        getNtpTime();
-        reflashTime();
-      }
-      else
-      {
-        mySerialPrintln("");
-        mySerialPrintln("Please enter the code to be modified:");
-        mySerialPrintln("Brightness Setting Input 0x01");
-        mySerialPrintln("Address setting input 0x02");
-        mySerialPrintln("Screen orientation setting input 0x03"); 
-        mySerialPrintln("Change weather update time 0x04"); 
-        mySerialPrintln("Reset WiFi (it will reboot) 0x05");
-        mySerialPrintln("Input TD KEY 0x06");
-        mySerialPrintln("Reset Time 0x07");
-        mySerialPrintln("Rebooting the device 0x99");
-        mySerialPrintln("");
-      }
+      mySerialPrintln("");
+      mySerialPrintln("Please enter the code to be modified:");
+      mySerialPrintln("Brightness Setting Input 0x01");
+      mySerialPrintln("Address setting input 0x02");
+      mySerialPrintln("Screen orientation setting input 0x03"); 
+      mySerialPrintln("Change weather update time 0x04"); 
+      mySerialPrintln("Reset WiFi (it will reboot) 0x05");
+      mySerialPrintln("Input TD KEY 0x06");
+      mySerialPrintln("Reset Time 0x07");
+      mySerialPrintln("Rebooting the device 0x99");
+      mySerialPrintln("");
     }
   }
 }
@@ -620,7 +678,7 @@ void Webconfig()
   // add a custom input field
   // int customFieldLength = 40;
 
-  // new (&custom_field) WiFiManagerParameter("customfieldid", "Custom Field Label", "Custom Field Value", customFieldLength,"placeholder=\"Custom Field Placeholder\"");
+  // new (&custom_field) WiFiManagerParameter("customfieldid", "Custom Field Label", "Custom Field Value", customFieldLength,"placeholder=\"Custom Field Placeholder\");
 
   // test custom html input type(checkbox)
   //  new (&custom_field) WiFiManagerParameter("customfieldid", "Custom Field Label", "Custom Field Value", customFieldLength,"placeholder=\"Custom Field Placeholder\" type=\"checkbox\""); // custom html type
@@ -745,9 +803,10 @@ void saveTDKeytoEEP(String td_api_key)
   {
     EEPROM.write(td_key_addr + cnum, td_api_key[cnum]);
     mySerialPrint(td_api_key[cnum]);
-    EEPROM.commit();
-    delay(5);
   }
+  // 一次性提交，减少擦写次数
+  EEPROM.commit();
+  delay(5);
   mySerialPrintln("");
 }
 void readTDKeyfromEEP()
@@ -756,7 +815,6 @@ void readTDKeyfromEEP()
   for (int cnum = 0; cnum < 32; cnum++)
   {
     TD_key += char(EEPROM.read(td_key_addr + cnum));
-    delay(5);
   }
 }
 
@@ -807,8 +865,7 @@ void saveParamCallback()
   if (EEPROM.read(Ro_addr) != LCD_Rotation)
   {
     EEPROM.write(Ro_addr, LCD_Rotation);
-    EEPROM.commit();
-    delay(5);
+    // defer commit until end of this callback
   }
   tft.setRotation(LCD_Rotation);
   tft.fillScreen(0x0000);
@@ -818,8 +875,7 @@ void saveParamCallback()
   if (EEPROM.read(BL_addr) != LCD_BL_PWM)
   {
     EEPROM.write(BL_addr, LCD_BL_PWM);
-    EEPROM.commit();
-    delay(5);
+    // defer commit until end of this callback
   }
   // 屏幕亮度
   Serial.printf("The brightness is adjusted to:");
@@ -833,9 +889,12 @@ void saveParamCallback()
   // 是否使用DHT11传感器
   Serial.printf("DHT11传感器：");
   EEPROM.write(DHT_addr, DHT_img_flag);
-  EEPROM.commit(); // 保存更改的数据
+  // defer commit until end of this callback
   mySerialPrintln((DHT_img_flag ? "已启用" : "未启用"));
 #endif
+  // 所有写入在此处一次性提交，减少擦写
+  EEPROM.commit();
+  delay(5);
 }
 #endif
 
@@ -1319,15 +1378,33 @@ void digitalClockDisplay(int reflash_en = 0)
   int now_minute = minute(); // 获取分钟
   int now_second = second(); // 获取秒针
 
-  int err_times = 0;
-  unsigned long currentTime = millis();
-  while (now_hour == 0 && now_minute == 0 && err_times <= 5 && currentTime < 30000){
-    err_times++;
-    getNtpTime();
-    delay(500);
+  // 非阻塞 NTP 重试：如果当前时间未设置（00:00），定时触发 NTP 请求以避免界面阻塞
+  static unsigned long ntp_last_attempt = 0;
+  static uint8_t ntp_attempts = 0;
+  const unsigned long NTP_RETRY_INTERVAL_MS = 5000; // 每次重试间隔 5s
+  const uint8_t NTP_RETRY_MAX = 6;                 // 最多重试 6 次
+
+  if (now_hour == 0 && now_minute == 0) {
+    // 如果还没开始重试，立即发起一次
+    if (ntp_attempts == 0 && (millis() - ntp_last_attempt > 0)) {
+      ntp_last_attempt = millis();
+      ntp_attempts = 1;
+      getNtpTime();
+    }
+    // 根据间隔触发后续重试
+    else if (ntp_attempts > 0 && ntp_attempts < NTP_RETRY_MAX && (millis() - ntp_last_attempt >= NTP_RETRY_INTERVAL_MS)) {
+      ntp_last_attempt = millis();
+      ntp_attempts++;
+      getNtpTime();
+    }
+    // 如果时间被设置，则重置计数
     now_hour = hour();     // 获取小时
     now_minute = minute(); // 获取分钟
     now_second = second(); // 获取秒针
+    if (now_hour != 0 || now_minute != 0) {
+      ntp_attempts = 0;
+      ntp_last_attempt = 0;
+    }
   }
 
   // 小时刷新
@@ -1397,54 +1474,198 @@ void TDBanner()
 const int NTP_PACKET_SIZE = 48;     // NTP时间在消息的前48字节中
 byte packetBuffer[NTP_PACKET_SIZE]; // buffer to hold incoming & outgoing packets
 
+// 辅助：打印并解析域名
+bool debug_resolve(const char* host, IPAddress &ip)
+{
+    mySerialPrint("Resolve host: ");
+    mySerialPrintln(host);
+    mySerialPrint("Local IP: ");
+    mySerialPrintln(WiFi.localIP().toString());
+    mySerialPrint("Gateway: ");
+    mySerialPrintln(WiFi.gatewayIP().toString());
+    mySerialPrint("DNS: ");
+    mySerialPrint(WiFi.dnsIP(0).toString());
+    mySerialPrint(" ");
+    mySerialPrintln(WiFi.dnsIP(1).toString());
+    bool ok = WiFi.hostByName(host, ip);
+    if (ok) {
+      mySerialPrint("Resolved: ");
+      mySerialPrintln(ip.toString());
+    } else {
+      mySerialPrintln("Resolve FAILED");
+    }
+    return ok;
+}
+
 time_t getNtpTime()
 {
   IPAddress ntpServerIP; // NTP server's ip address
-  int err_flag = 0;
+
+  mySerialPrintln("getNtpTime start");
+
+  // Ensure WiFi is up
+  if (WiFi.status() != WL_CONNECTED) {
+    mySerialPrintln("WiFi not connected, waking and reconnecting...");
+    WiFi.forceSleepWake();
+    WiFi.begin(wificonf.stassid, wificonf.stapsw);
+    unsigned long start = millis();
+    while (WiFi.status() != WL_CONNECTED && millis() - start < 8000) {
+      delay(200);
+    }
+    if (WiFi.status() != WL_CONNECTED) {
+      mySerialPrintln("WiFi still not connected, aborting NTP");
+      return 0;
+    }
+    mySerialPrint("Reconnected, IP:");
+    mySerialPrintln(WiFi.localIP());
+  }
+
+  // print DNS / network info
+  mySerialPrint("Network info: IP=");
+  mySerialPrint(WiFi.localIP().toString());
+  mySerialPrint(" GW=");
+  mySerialPrint(WiFi.gatewayIP().toString());
+  mySerialPrint(" DNS0=");
+  mySerialPrint(WiFi.dnsIP(0).toString());
+  mySerialPrint(" DNS1=");
+  mySerialPrintln(WiFi.dnsIP(1).toString());
+
+  // If DNS not provided by DHCP, set fallback DNS servers (keep current IP/gateway/subnet)
+  if (WiFi.dnsIP(0) == IPAddress(0,0,0,0)) {
+    mySerialPrintln("DNS unset: applying fallback DNS servers");
+    IPAddress local = WiFi.localIP();
+    IPAddress gw = WiFi.gatewayIP();
+    IPAddress sn = WiFi.subnetMask();
+    IPAddress dns1(223,5,5,5);   // AliDNS
+    IPAddress dns2(8,8,8,8);     // Google DNS
+    // Note: WiFi.config with same local IP preserves current address but switches to static config
+    if (WiFi.config(local, gw, sn, dns1, dns2)) {
+      mySerialPrint("Fallback DNS applied: ");
+      mySerialPrint(WiFi.dnsIP(0).toString());
+      mySerialPrint(" ");
+      mySerialPrintln(WiFi.dnsIP(1).toString());
+    } else {
+      mySerialPrintln("WiFi.config failed to set DNS");
+    }
+  }
+
+  // Re-bind UDP in case WiFi was slept/woken
+  Udp.begin(localPort);
+  mySerialPrint("UDP bound to port: ");
+  mySerialPrintln(localPort);
+
   while (Udp.parsePacket() > 0)
     ; // discard any previously received packets
-  // mySerialPrintln("Transmit NTP Request");
-  //  get a random server from the pool
-  WiFi.hostByName(ntpServerName, ntpServerIP);
-  // mySerialPrint(ntpServerName);
-  // mySerialPrint(": ");
-  // mySerialPrintln(ntpServerIP);
-  sendNTPpacket(ntpServerIP);
-  uint32_t beginWait = millis();
-  while (millis() - beginWait < 1500)
-  {
-    int size = Udp.parsePacket();
-    if (size >= NTP_PACKET_SIZE)
+
+  // Try DNS resolution first
+  bool resolved = WiFi.hostByName(ntpServerName, ntpServerIP);
+  if (!resolved) {
+    mySerialPrintln("DNS lookup failed for NTP server");
+    // fallback to a known NTP IP
+    ntpServerIP = IPAddress(129, 6, 15, 28); // time.nist.gov fallback
+    mySerialPrint("Using fallback NTP IP: ");
+    mySerialPrintln(ntpServerIP.toString());
+  } else {
+    mySerialPrint("NTP server IP: ");
+    mySerialPrintln(ntpServerIP.toString());
+  }
+
+  const uint8_t maxAttempts = 3;
+  for (uint8_t attempt = 1; attempt <= maxAttempts; ++attempt) {
+    mySerialPrint("NTP attempt ");
+    mySerialPrint(attempt);
+    mySerialPrint(" send at ");
+    mySerialPrintln(String(millis()));
+
+    sendNTPpacket(ntpServerIP);
+
+    uint32_t beginWait = millis();
+    while (millis() - beginWait < 3000) // wait up to 3s per attempt
     {
-      mySerialPrintln("Receive NTP Response");
-      Udp.read(packetBuffer, NTP_PACKET_SIZE); // read packet into the buffer
-      unsigned long secsSince1900;
-      // convert four bytes starting at location 40 to a long integer
-      secsSince1900 = (unsigned long)packetBuffer[40] << 24;
-      secsSince1900 |= (unsigned long)packetBuffer[41] << 16;
-      secsSince1900 |= (unsigned long)packetBuffer[42] << 8;
-      secsSince1900 |= (unsigned long)packetBuffer[43];
-      // mySerialPrintln(secsSince1900 - 2208988800UL + timeZone * SECS_PER_HOUR);
-      return secsSince1900 - 2208988800UL + timeZone * SECS_PER_HOUR;
+      int size = Udp.parsePacket();
+      if (size >= NTP_PACKET_SIZE)
+      {
+        mySerialPrintln("Receive NTP Response");
+        Udp.read(packetBuffer, NTP_PACKET_SIZE); // read packet into the buffer
+
+        unsigned long secsSince1900 = ((unsigned long)packetBuffer[40] << 24) |
+                                      ((unsigned long)packetBuffer[41] << 16) |
+                                      ((unsigned long)packetBuffer[42] << 8) |
+                                      ((unsigned long)packetBuffer[43]);
+
+        // 转换为 Unix epoch 并应用时区偏移
+        time_t epoch = secsSince1900 - 2208988800UL + timeZone * SECS_PER_HOUR;
+
+        // 使用 TimeLib 将 epoch 拆分为年/月/日/时/分/秒 并打印
+        tmElements_t tm;
+        breakTime(epoch, tm);
+        char buf[32];
+        sprintf(buf, "%04d-%02d-%02d %02d:%02d:%02d",
+                tmYearToCalendar(tm.Year), tm.Month, tm.Day,
+                tm.Hour, tm.Minute, tm.Second);
+        mySerialPrint("NTP time: ");
+        mySerialPrintln(buf);
+
+        // 将时间写入 TimeLib，确保系统时间立即生效（用于界面刷新）
+        setTime(tm.Hour, tm.Minute, tm.Second, tm.Day, tm.Month, tmYearToCalendar(tm.Year));
+
+        return epoch;
+      }
+      delay(50);
     }
-    else {
-      err_flag++;
-      if (err_flag == 5){
-        mySerialPrintln("No NTP Response :-( " + String(size) + ' ' + String(ntpServerName) + ' ' + ntpServerIP.toString());
-        if (size > 0){
-          Udp.read(packetBuffer, size);
-          for(int i = 0; i < size; i++) {
-              mySerialPrint(packetBuffer[i], HEX);
-              mySerialPrint(" ");
-          }
-          mySerialPrintln();
+    mySerialPrint("No NTP Response for attempt ");
+    mySerialPrintln(attempt);
+    // 如果 DNS 解析失败且使用了 fallback IP，可再尝试一次 DNS
+    if (!resolved && attempt == 1) {
+      mySerialPrintln("Retry DNS resolution for NTP server");
+      if (WiFi.hostByName(ntpServerName, ntpServerIP)) {
+        mySerialPrint("Resolved on retry: ");
+        mySerialPrintln(ntpServerIP.toString());
+        resolved = true;
+      } else {
+        mySerialPrintln("DNS still failed");
+      }
+    }
+  }
+
+  mySerialPrintln("No NTP Response :-( Timeout overall");
+  // NTP failed — 尝试 HTTP 时间回退（worldtimeapi）
+  mySerialPrintln("Attempting HTTP time fallback (worldtimeapi.org)");
+  HTTPClient http;
+  String url = "http://worldtimeapi.org/api/ip";
+  http.begin(wificlient, url);
+  int httpCode = http.GET();
+  if (httpCode == HTTP_CODE_OK)
+  {
+    String payload = http.getString();
+    DynamicJsonDocument doc(1024);
+    DeserializationError err = deserializeJson(doc, payload);
+    if (!err)
+    {
+      if (doc.containsKey("unixtime"))
+      {
+        unsigned long unixt = doc["unixtime"].as<unsigned long>();
+        if (unixt > 1000000000UL)
+        {
+          time_t epoch = (time_t)unixt + timeZone * SECS_PER_HOUR;
+          tmElements_t tm;
+          breakTime(epoch, tm);
+          setTime(tm.Hour, tm.Minute, tm.Second, tm.Day, tm.Month, tmYearToCalendar(tm.Year));
+          char buf[32];
+          sprintf(buf, "%04d-%02d-%02d %02d:%02d:%02d",
+                  tmYearToCalendar(tm.Year), tm.Month, tm.Day,
+                  tm.Hour, tm.Minute, tm.Second);
+          mySerialPrint("HTTP time: ");
+          mySerialPrintln(buf);
+          http.end();
+          return epoch;
         }
       }
     }
   }
-  mySerialPrint("No NTP Response :-( ");
-  mySerialPrintln("Time Diff: " + String(millis() - beginWait));
-  return 0; // 无法获取时间时返回0
+  http.end();
+
+  return 0; // failed to get time
 }
 
 // 向NTP服务器发送请求
@@ -1625,6 +1846,24 @@ void setup()
             break;
     }
   }
+  // If DNS not provided by DHCP, set fallback DNS servers (keep current IP/gateway/subnet)
+  if (WiFi.dnsIP(0) == IPAddress(0,0,0,0)) {
+    mySerialPrintln("DNS unset: applying fallback DNS servers");
+    IPAddress local = WiFi.localIP();
+    IPAddress gw = WiFi.gatewayIP();
+    IPAddress sn = WiFi.subnetMask();
+    IPAddress dns1(223,5,5,5);   // AliDNS
+    IPAddress dns2(8,8,8,8);     // Google DNS
+    // Note: WiFi.config with same local IP preserves current address but switches to static config
+    if (WiFi.config(local, gw, sn, dns1, dns2)) {
+      mySerialPrint("Fallback DNS applied: ");
+      mySerialPrint(WiFi.dnsIP(0).toString());
+      mySerialPrint(" ");
+      mySerialPrintln(WiFi.dnsIP(1).toString());
+    } else {
+      mySerialPrintln("WiFi.config failed to set DNS");
+    }
+  }
   delay(10);
   while (loadNum < 194) // 让动画走完
   {
@@ -1679,6 +1918,7 @@ void setup()
 #endif
 
   // WiFi.forceSleepBegin(); // wifi off
+
   // mySerialPrintln("WIFI休眠......");
   // Wifi_en = 0;
   closeWifi();
