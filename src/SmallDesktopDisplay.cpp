@@ -101,6 +101,7 @@ void readTDKeyfromEEP();
 void openWifi();
 void closeWifi();
 void reflashTime();
+void updateWeatherInterval();
 
 // 创建时间更新函数线程
 Thread reflash_time = Thread();
@@ -134,6 +135,16 @@ unsigned int updateweater_time = 1;
 
 //----------------------------------------------------
 
+void updateWeatherInterval()
+{
+  // 合法值区间保护，默认回落到 10 分钟
+  if (updateweater_time < 1 || updateweater_time > 60)
+  {
+    updateweater_time = 10;
+  }
+  reflash_openWifi.setInterval(updateweater_time * 60 * TMS);
+}
+
 // LCD屏幕相关设置
 TFT_eSPI tft = TFT_eSPI(); // 引脚请自行配置tft_espi库中的 User_Setup.h文件
 TFT_eSprite clk = TFT_eSprite(&tft);
@@ -164,7 +175,8 @@ String TD_key = "";           // 天地图密钥
 WeatherNum wrat;
 
 uint32_t targetTime = 0;
-String cityCode = "101090609"; // 天气城市代码
+String defcityCode = "101020200"; // 默认天气城市代码
+String cityCode = defcityCode; // 天气城市代码
 int tempnum = 0;               // 温度百分比
 int huminum = 0;               // 湿度百分比
 int tempcol = 0xffff;          // 温度显示颜色
@@ -307,11 +319,11 @@ void humidityWin()
 {
   clk.setColorDepth(8);
 
-  huminum = huminum / 2;
+  uint8_t barWidth = constrain(huminum, 0, 100) / 2; // 0-100 -> 0-50px
   clk.createSprite(52, 6);                         // 创建窗口
   clk.fillSprite(0x0000);                          // 填充率
   clk.drawRoundRect(0, 0, 52, 6, 3, 0xFFFF);       // 空心圆角矩形  起始位x,y,长度，宽度，圆弧半径，颜色
-  clk.fillRoundRect(1, 1, huminum, 4, 2, humicol); // 实心圆角矩形
+  clk.fillRoundRect(1, 1, barWidth, 4, 2, humicol); // 实心圆角矩形
   clk.pushSprite(45, 222);                         // 窗口位置
   clk.deleteSprite();
 }
@@ -487,7 +499,7 @@ void Serial_set()
     }
     if (SMOD == "0x02") // 设置2地址设置
     {
-      int CityCODE = 0;
+      long CityCODE = 0;
       int CityC = atoi(incomingByte.c_str()); // int n = atoi(xxx.c_str());//String转int
       if (((CityC >= 101000000) && (CityC <= 102000000)) || (CityC == 0))
       {
@@ -554,6 +566,7 @@ void Serial_set()
       if (wtup >= 1 && wtup <= 60)
       {
         updateweater_time = wtup;
+        updateWeatherInterval();
         SMOD = "";
         Serial.printf("Weather update time changed to：");
         mySerialPrint(updateweater_time);
@@ -751,8 +764,15 @@ void Webconfig()
   res = wm.autoConnect("AutoConnectAP"); // anonymous ap
   //  res = wm.autoConnect("AutoConnectAP","password"); // password protected ap
 
-  while (!res)
-    ;
+  if (!res)
+  {
+    mySerialPrintln("Config portal failed or timed out");
+    delay(500);
+  }
+  else
+  {
+    mySerialPrintln("Config portal connected");
+  }
 }
 
 String getParam(String name)
@@ -799,10 +819,15 @@ void readwificonfig()
 
 void saveTDKeytoEEP(String td_api_key)
 {
+  size_t keyLen = td_api_key.length();
   for (int cnum = 0; cnum < 32; cnum++)
   {
-    EEPROM.write(td_key_addr + cnum, td_api_key[cnum]);
-    mySerialPrint(td_api_key[cnum]);
+    char v = (static_cast<size_t>(cnum) < keyLen) ? td_api_key[cnum] : '\0';
+    EEPROM.write(td_key_addr + cnum, v);
+    if (static_cast<size_t>(cnum) < keyLen)
+    {
+      mySerialPrint(v);
+    }
   }
   // 一次性提交，减少擦写次数
   EEPROM.commit();
@@ -814,7 +839,12 @@ void readTDKeyfromEEP()
   TD_key = "";
   for (int cnum = 0; cnum < 32; cnum++)
   {
-    TD_key += char(EEPROM.read(td_key_addr + cnum));
+    char v = char(EEPROM.read(td_key_addr + cnum));
+    if (v == '\0' || v == char(0xFF))
+    {
+      break;
+    }
+    TD_key += v;
   }
 }
 
@@ -834,6 +864,7 @@ void saveParamCallback()
   DHT_img_flag = getParam("DHT11_en").toInt();
 #endif
   updateweater_time = getParam("WeaterUpdateTime").toInt();
+  updateWeatherInterval();
   cc = getParam("CityCode").toInt();
   LCD_Rotation = getParam("set_rotation").toInt();
   LCD_BL_PWM = getParam("LCDBL").toInt();
@@ -939,6 +970,7 @@ void getCityCode()
   {
     mySerialPrintln("Request city code error:");
     mySerialPrintln(httpCode);
+    cityCode = defcityCode;
   }
 
   // 关闭ESP8266与服务器连接
@@ -1025,7 +1057,7 @@ String HTTPS_request(String host, String url, String parameter = "", String fing
   {
     HTTPS.setFingerprint(fingerprint.c_str()); // 服务器证书指纹进行服务器身份认证
   }
-  int cache = sizeof(postRequest) + 10;
+  int cache = postRequest.length() + 10;
   // mySerialPrint("发送缓存：");
   // mySerialPrintln(postRequest);
   HTTPS.setBufferSizes(Receive_cache, cache); // 接收和发送缓存大小
@@ -1222,16 +1254,15 @@ void weaterData(String *cityDZ, String *dataSK, String *dataFC)
   uint16_t pm25BgColor = tft.color565(156, 202, 127); // 优
   String aqiTxt = "优";
   int pm25V = sk["aqi"];
-  int err_times = 0;
-  while (pm25V == 0 && err_times <= 5)
+  bool hasValidAqi = pm25V > 0;
+  if (!hasValidAqi)
   {
-    delay(100);
-    getCityWeater();
-    pm25V = sk["aqi"];
-    err_times++;
+    // 避免递归获取天气导致的栈溢出，缺失时直接显示占位
+    mySerialPrintln("AQI missing in response, using placeholder");
+    pm25BgColor = tft.color565(80, 80, 80);
+    aqiTxt = "未知";
   }
-  String strOtherAqiInfo = " " + String(int(pm25V)) + "";
-  if (pm25V > 200)
+  else if (pm25V > 200)
   {
     pm25BgColor = tft.color565(136, 11, 32); // 重度
     aqiTxt = "重度";
@@ -1251,12 +1282,15 @@ void weaterData(String *cityDZ, String *dataSK, String *dataFC)
     pm25BgColor = tft.color565(247, 219, 100); // 良
     aqiTxt = "良";
   }
-  else if (pm25V <= 25)
+  else
   {
     pm25BgColor = tft.color565(156, 202, 127); // 优
     aqiTxt = "优";
   }
-  aqiTxt = aqiTxt + strOtherAqiInfo;
+  if (hasValidAqi)
+  {
+    aqiTxt = aqiTxt + " " + String(int(pm25V));
+  }
   clk.createSprite(85, 24);
   clk.fillSprite(bgColor);
   clk.fillRoundRect(0, 0, 85, 24, 4, pm25BgColor);
@@ -1413,8 +1447,11 @@ void digitalClockDisplay(int reflash_en = 0)
     drawLineFont(20, timeY, now_hour / 10, 3, SD_FONT_WHITE);
     drawLineFont(60, timeY, now_hour % 10, 3, SD_FONT_WHITE);
     Hour_sign = now_hour;
-    getTD();
-    getCityWeater();
+    if (Wifi_en == 1 && WiFi.status() == WL_CONNECTED)
+    {
+      getTD();
+      getCityWeater();
+    }
   }
   // 分钟刷新
   if ((now_minute != Minute_sign) || (reflash_en == 1))
@@ -1894,7 +1931,7 @@ void setup()
   TJpgDec.setSwapBytes(true);
   TJpgDec.setCallback(tft_output);
 
-  int CityCODE = 0;
+  long CityCODE = 0;
   for (int cnum = 5; cnum > 0; cnum--)
   {
     CityCODE = CityCODE * 100;
@@ -1928,11 +1965,11 @@ void setup()
   reflash_Banner.setInterval(2 * TMS); // 设置所需间隔 2秒
   reflash_Banner.onRun(reflashBanner);
 
-  reflash_openWifi.setInterval(updateweater_time * 60 * TMS); // 设置所需间隔 10分钟
+  updateWeatherInterval(); // 设置所需间隔 10分钟
   reflash_openWifi.onRun(openWifi);
 
   reflash_Animate.setInterval(TMS / 10); // 设置帧率
-  reflash_openWifi.onRun(refresh_AnimatedImage);
+  reflash_Animate.onRun(refresh_AnimatedImage);
   controller.run();
 }
 
@@ -1957,8 +1994,7 @@ void refresh_AnimatedImage()
 void loop()
 {
   // refresh_AnimatedImage(&TJpgDec); //更新右下角
-  refresh_AnimatedImage(); // 更新右下角
-  Supervisor_controller(); // 守护线程池
+  Supervisor_controller(); // 守护线程池（包含动画刷新）
   WIFI_reflash_All();      // WIFI应用
   Serial_set();            // 串口响应
   Button_sw1.loop();       // 按钮轮询
