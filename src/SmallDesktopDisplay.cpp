@@ -1126,6 +1126,15 @@ String TD_zodiac[12] = {"鼠", "牛", "虎", "兔", "龙", "蛇",
 String TD_Earthly_Branches[12] = {"子", "丑", "寅", "卯", "辰", "巳",
                                   "午", "未", "申", "酉", "戌", "亥"};
 String TD_jieqi = "";
+// apis.tianapi.com 限流策略:
+// 1) 成功后 30 分钟再请求
+// 2) 失败后每 1 秒重试，连续 10 次失败后进入 30 分钟冷却
+unsigned long td_next_attempt_ms = 0;
+uint8_t td_consecutive_failures = 0;
+const unsigned long TD_SUCCESS_RETRY_MS = 30UL * 60UL * 1000UL;
+const unsigned long TD_FAIL_RETRY_MS = 1000UL;
+const uint8_t TD_FAIL_FAST_RETRY_MAX = 10;
+
 String full_zodiac(const String& zodiac){
   for (int i = 0; i < 12; ++i){
     if (zodiac == TD_zodiac[i]){
@@ -1143,6 +1152,12 @@ void splitDate(const String& date, String& year, String& month, String& day) {
 }
 void getTD()
 {
+  unsigned long nowMs = millis();
+  if ((long)(nowMs - td_next_attempt_ms) < 0)
+  {
+    return;
+  }
+
   // String URL = "https://apis.tianapi.com/lunar/index?key=" + TD_key;
   String str = HTTPS_request("apis.tianapi.com", "/lunar/index", "key=" + TD_key);
   mySerialPrintln("Obtaining Heavenly Stems and Earthly Branches information");
@@ -1152,6 +1167,27 @@ void getTD()
     DynamicJsonDocument doc(str.length() * 2);
     deserializeJson(doc, str);
     JsonObject sk = doc.as<JsonObject>();
+    int tdCode = sk["code"] | -1;
+    if (tdCode != 200 || sk["result"].isNull())
+    {
+      mySerialPrint("Request for Heavenly Stem and Earthly Branch Errors, code=");
+      mySerialPrintln(tdCode);
+      if (td_consecutive_failures < 255)
+        td_consecutive_failures++;
+
+      if (td_consecutive_failures >= TD_FAIL_FAST_RETRY_MAX)
+      {
+        td_consecutive_failures = 0;
+        td_next_attempt_ms = millis() + TD_SUCCESS_RETRY_MS;
+        mySerialPrintln("TianAPI failed 10 times continuously, waiting 30 minutes before retry");
+      }
+      else
+      {
+        td_next_attempt_ms = millis() + TD_FAIL_RETRY_MS;
+      }
+      return;
+    }
+
     TD_gregoriandate = sk["result"]["gregoriandate"].as<String>();
     splitDate(TD_gregoriandate, TD_gregoriandate_year, TD_gregoriandate_month, TD_gregoriandate_day);
     TD_lunardate = sk["result"]["lunardate"].as<String>();
@@ -1165,10 +1201,25 @@ void getTD()
     TD_lunarday = sk["result"]["lunarday"].as<String>();
     TD_jieqi = sk["result"]["jieqi"].as<String>();
     mySerialPrintln("Get Success");
+    td_consecutive_failures = 0;
+    td_next_attempt_ms = millis() + TD_SUCCESS_RETRY_MS;
   }
   else
   {
     mySerialPrintln("Request for Heavenly Stem and Earthly Branch Errors");
+    if (td_consecutive_failures < 255)
+      td_consecutive_failures++;
+
+    if (td_consecutive_failures >= TD_FAIL_FAST_RETRY_MAX)
+    {
+      td_consecutive_failures = 0;
+      td_next_attempt_ms = millis() + TD_SUCCESS_RETRY_MS;
+      mySerialPrintln("TianAPI failed 10 times continuously, waiting 30 minutes before retry");
+    }
+    else
+    {
+      td_next_attempt_ms = millis() + TD_FAIL_RETRY_MS;
+    }
   }
 }
 
