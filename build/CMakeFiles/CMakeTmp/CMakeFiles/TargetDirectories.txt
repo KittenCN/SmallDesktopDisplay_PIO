@@ -1,3 +1,0 @@
-D:/workstation/GitHub/SmallDesktopDisplay_PIO/build/CMakeFiles/CMakeTmp/CMakeFiles/cmTC_c9c2f.dir
-D:/workstation/GitHub/SmallDesktopDisplay_PIO/build/CMakeFiles/CMakeTmp/CMakeFiles/edit_cache.dir
-D:/workstation/GitHub/SmallDesktopDisplay_PIO/build/CMakeFiles/CMakeTmp/CMakeFiles/rebuild_cache.dir

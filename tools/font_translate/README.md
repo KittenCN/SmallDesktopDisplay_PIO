@@ -1,45 +1,80 @@
-font_translate tool
+# font_translate
 
-用途：
-- 从 C header（类似 `const uint8_t font_td_20[] = { ... };`）提取二进制数据
-- 从 HZK（二进制，GB2312 顺序，如 HZK16）按 txt 列表生成精简 .h 字库，仅包含所需汉字
-- 去重 txt 字符
+`font_translate.py` 是一个无第三方依赖的 Python 3.10+ 命令行工具，用于：
 
-示例：
+- 从 C/C++ header 的 `uint8_t`、`unsigned char` 或 `byte` 数组提取二进制；
+- 从 GB2312 顺序的 HZK 字库生成只包含所需字符的 C header；
+- 从 header 注释提取字符；
+- 对 UTF-8 字符列表去重。
 
-1) 提取 header 到 binary：
+所有输出命令都会自动创建父目录。参数或输入不合法时命令返回非零退出码，适合在 CI 中使用。
 
-```
-python tools/font_translate/font_translate.py extract-h --input src/font/font_td_20.h --out build/font_td_20.bin
-```
+## 从 header 提取二进制
 
-若你知道每个字模的字节大小（例如 16x16 -> 32 bytes），可以同时分割：
-
-```
-python tools/font_translate/font_translate.py extract-h --input src/font/font_td_20.h --out build/font_td_20.bin --glyph-size 32 --out-glyph-dir build/glyphs
+```powershell
+python tools/font_translate/font_translate.py extract-h `
+  --input src/font/font_td_20.h `
+  --out build/font_td_20.bin
 ```
 
-2) 从 HZK16 二进制和字符 txt 生成精简 .h（推荐流程）：
-- 在 PC 上准备 `hzk16.bin`（GB2312 排列的位图字库）并放在项目或指定路径
-- 准备包含要显示汉字的 `chars.txt`（UTF-8 编码，字符连续即可）
+解析器只接受 0 到 255 的 C 整数常量，忽略注释内容，不会把注释中的数字误当成字节。支持十进制、十六进制、二进制、八进制及整数后缀。
 
-执行：
+如果 header 包含多个字节数组，必须用 `--array` 明确选择：
 
-```
-python tools/font_translate/font_translate.py txt2hzk --hzk /path/to/hzk16.bin --txt chars.txt --out src/font/font_small.h --name font_small --width 16 --height 16
-```
-
-3) 去重 txt：
-
-```
-python tools/font_translate/font_translate.py dedupe --txt rawchars.txt --out dedup.txt
+```powershell
+python tools/font_translate/font_translate.py extract-h `
+  --input assets/fonts.h --array font_small `
+  --out build/font_small.bin
 ```
 
-注意：
-- 生成 .h 依赖 HZK 的字模排列与制定的尺寸（width/height）。若 HZK 排列或尺寸不同，请调整参数或准备相应的 HZK 文件。
-- 如果你的原始 `font_td_20.h` 是一种自定义排列（并非 GB2312 HZK），你可以先用 `extract-h` 得到二进制，再用 `--glyph-size` 切分，最后手动或借助 `chars.txt` 将字符与字模一一对应。
+可同时校验固定字形大小并分割文件。数据长度不是字形大小的整数倍时会失败，不会生成不完整字形：
 
-后续我可以：
-- 把脚本扩展为直接识别常见 header 的注释中字符映射并自动生成 txt（若你的 `font_td_20.h` 中带有字符注释）
-- 添加将生成的 .h 自动集成到项目的示例调用（platformio 上传 LittleFS, etc.）
+```powershell
+python tools/font_translate/font_translate.py extract-h `
+  --input src/font/font_td_20.h `
+  --out build/font_td_20.bin `
+  --glyph-size 32 --out-glyph-dir build/glyphs
+```
 
+`--out-glyph-dir` 必须和 `--glyph-size` 一起使用。
+
+## 从 HZK 生成精简 header
+
+准备 GB2312 顺序的 HZK 二进制和 UTF-8 字符列表，然后执行：
+
+```powershell
+python tools/font_translate/font_translate.py txt2hzk `
+  --hzk assets/hzk16.bin --txt chars.txt `
+  --out src/font/font_small.h --name font_small `
+  --width 16 --height 16
+```
+
+`width` 和 `height` 必须为正数，HZK 文件大小也必须是单字形大小的整数倍。默认情况下，任一字符不能编码为双字节 GB2312 或字形超出 HZK 文件范围，命令都会失败，避免悄悄生成缺字字库。确实允许缺字时可显式增加 `--allow-missing`；即使如此，至少要成功生成一个字形。
+
+生成数组按字符列表去重后的顺序连续存储，每个字形占 `ceil(width / 8) * height` 字节。
+
+## 从注释提取字符
+
+```powershell
+python tools/font_translate/font_translate.py header2chars `
+  --input src/font/example.h --out build/chars.txt
+```
+
+该命令从 `// ...` 和 `/* ... */` 注释中按首次出现顺序提取 CJK、ASCII 字母数字及常见标点。没有可提取字符时返回失败。
+
+## 字符去重
+
+```powershell
+python tools/font_translate/font_translate.py dedupe `
+  --txt rawchars.txt --out build/dedup.txt
+```
+
+空白字符会被移除，其他字符按首次出现顺序保留。
+
+## 测试
+
+```powershell
+python -m unittest discover -s tools/font_translate/tests -v
+```
+
+测试仅使用 Python 标准库，不读取真实 HZK 文件，也不写入仓库目录。

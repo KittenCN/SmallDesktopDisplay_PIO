@@ -1,16 +1,23 @@
-.pio/build/
-.vscode/.browse.c_cpp.db*
-.vscode/c_cpp_properties.json
-.vscode/launch.json
-.vscode/ipch
+# PlatformIO build products and downloaded dependencies
+.pio/
+
+# Generated build trees and test output
+build/
 .test/
 
-# CMake
-CMakeLists.txt
-CMakeCache.txt
-cmake_install.cmake
-*.gif
-*.png
-*.jpg
-*.jpeg
-*.bmp
+# Python caches and local virtual environments
+__pycache__/
+*.py[cod]
+.venv/
+venv/
+
+# Editor and OS metadata (keep the shared extension recommendation)
+.vscode/*
+!.vscode/extensions.json
+**/.vscode/
+.DS_Store
+Thumbs.db
+
+# Simulator traces and generated media previews
+wokwi.vcd
+src/Animate/preview_*/

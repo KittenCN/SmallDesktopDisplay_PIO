@@ -1,4 +1,4 @@
-#include "weathernum.h"
+#include "weatherNum.h"
 
 #include <TJpg_Decoder.h>
 //int numx;
@@ -6,33 +6,33 @@
 //int numw;
 
 //显示天气图标
-void WeatherNum::printfweather(int numx,int numy,int numw)
+void WeatherNum::draw(int16_t numx, int16_t numy, int numw)
 {
-  if(numw==00)
+  if(numw==0)
   {
     TJpgDec.drawJpg(numx,numy,t0, sizeof(t0));
   }
-  else if(numw==01)
+  else if(numw==1)
   {
     TJpgDec.drawJpg(numx,numy,t1, sizeof(t1));
   }
-  else if(numw==02)
+  else if(numw==2)
   {
     TJpgDec.drawJpg(numx,numy,t2, sizeof(t2));
   }
-  else if(numw==03)
+  else if(numw==3)
   {
     TJpgDec.drawJpg(numx,numy,t3, sizeof(t3));
   }
-  else if(numw==04)
+  else if(numw==4)
   {
     TJpgDec.drawJpg(numx,numy,t4, sizeof(t4));
   }
-  else if(numw==05)
+  else if(numw==5)
   {
     TJpgDec.drawJpg(numx,numy,t5, sizeof(t5));
   }
-  else if(numw==06)
+  else if(numw==6)
   {
     TJpgDec.drawJpg(numx,numy,t6, sizeof(t6));
   }

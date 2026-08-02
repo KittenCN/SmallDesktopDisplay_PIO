@@ -1,0 +1,42 @@
+name: CI
+
+on:
+  push:
+  pull_request:
+
+jobs:
+  firmware:
+    runs-on: ubuntu-latest
+    strategy:
+      fail-fast: false
+      matrix:
+        environment:
+          - esp12e
+          - esp12e_smartconfig
+          - esp12e_dht
+          - esp12e_no_animation
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-python@v5
+        with:
+          python-version: "3.12"
+      - run: python -m pip install platformio==6.1.18
+      - run: pio run -e ${{ matrix.environment }}
+
+  tests:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-python@v5
+        with:
+          python-version: "3.12"
+      - run: python -m pip install platformio==6.1.18
+      - run: python -B -m unittest discover -s tools/font_translate/tests -v
+      - run: pio test -e esp12e_test --without-uploading --without-testing
+      - name: Reject tracked build products
+        shell: bash
+        run: |
+          if git ls-files | grep -E '^(\.pio|build)/|(^|/)__pycache__/|\.pyc$|\.DS_Store$'; then
+            echo "Generated files must not be committed"
+            exit 1
+          fi

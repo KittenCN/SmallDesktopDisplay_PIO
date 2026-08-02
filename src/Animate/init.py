@@ -1,142 +1,61 @@
-import cv2
-import numpy as np
+"""Compatibility CLI for the animation GIF-to-header generator.
+
+The old script used intermediate PNG/JPEG directories and unsorted directory reads,
+which made frame order depend on the host filesystem and allowed stale frames into a
+new header. The canonical generator now reads the GIF sequence directly.
+"""
+
+from __future__ import annotations
+
+import argparse
 import os
-from PIL import Image, ImageSequence
+from pathlib import Path
 
-local_path = "./src/Animate/"
-
-def cv2_imread(file_path) -> np.ndarray:
-    img_mat = cv2.imdecode(np.fromfile(file_path, dtype=np.uint8), -1)
-    return img_mat
+from gif2hex import DEFAULT_JPEG_QUALITY, DEFAULT_MAX_SIZE, processImage
 
 
-def cv_imwrite(file_path, frame, frmode):
-    cv2.imencode(f".{frmode}", frame)[1].tofile(file_path)
+def init(
+    file_name_all: str | os.PathLike[str],
+    *,
+    output_file: str | os.PathLike[str] | None = None,
+    max_size: int = DEFAULT_MAX_SIZE,
+    jpeg_quality: int = DEFAULT_JPEG_QUALITY,
+    sample_every: int = 1,
+    save_preview: bool = True,
+) -> Path:
+    """Generate a header directly from the GIF's deterministic frame sequence."""
+    return processImage(
+        file_name_all,
+        saveImg=save_preview,
+        output_file=output_file,
+        max_size=max_size,
+        jpeg_quality=jpeg_quality,
+        sample_every=sample_every,
+    )
 
 
-def try_path(path):
-    """检查目录，没有就创建"""
-    if not os.path.exists(path):
-        print(f'创建目录{path}')
-        os.makedirs(path)
+def _build_parser() -> argparse.ArgumentParser:
+    parser = argparse.ArgumentParser(description=__doc__)
+    parser.add_argument("gif", help="input GIF")
+    parser.add_argument("-o", "--output", help="output header (default: next to the GIF)")
+    parser.add_argument("--max-size", type=int, default=DEFAULT_MAX_SIZE)
+    parser.add_argument("--quality", type=int, default=DEFAULT_JPEG_QUALITY)
+    parser.add_argument("--sample-every", type=int, default=1)
+    parser.add_argument("--no-preview", action="store_true")
+    return parser
 
 
-def parseGIF(gifname, key=1):
-    """    
-    将gif解析为图片
-
-    gifname: 文件名
-
-    key：是否抽帧，key默认为1,改为其他值则按比例抽帧
-    """
-    # 读取GIF
-    im = Image.open(local_path + gifname)
-    # GIF图片流的迭代器
-    iter = ImageSequence.Iterator(im)
-    # 获取文件名
-    file_name = gifname.split(".")[0]
-    index = 1
-    # 判断目录是否存在
-    save_path = local_path + f"imgs/{file_name}/png"
-    try_path(save_path)
-
-    # 遍历图片流的每一帧
-    for frame in iter:
-        if frame.width != frame.height:
-            exit(f"图片不是正方形: {frame.width}x{frame.height}")
-        frame = frame.resize((70, 70))
-        # print(f"image {index}: mode {frame.mode}, size {frame.size}")
-        if index % key == 0:
-            frame.save(f"{save_path}/{file_name}{index // key}.png")
-        index += 1
-
-
-def png_to_jpg(path, file_name):
-    url_list = os.listdir(path)
-    for i in url_list:
-        # print(i)
-        img = cv2_imread(path + i)
-        # 在这里修改图片大小，默认是70*70
-        img = cv2.resize(img, (70, 70))
-        try_path(local_path + f"imgs/{file_name}/jpg")
-        cv_imwrite(
-            local_path + f"imgs/{file_name}/jpg/{i.split('.')[0]}.jpg", img, "jpg")
-
-
-def write_to_h(path, file_name):
-    def _10to16(int_value: int) -> str:
-        num_list = ["0", "1", "2", "3", "4", "5", "6",
-                    "7", "8", "9", "A", "B", "C", "D", "E", "F"]
-        str_16 = ''
-
-        int_value, mod = divmod(int_value, 16)
-        str_16 = str(num_list[mod]) + str_16
-
-        if int_value == 0:
-            str_16 = "0" + str_16
-        else:
-            int_value, mod = divmod(int_value, 16)
-            str_16 = str(num_list[mod]) + str_16
-        return "0x" + str_16 + ","
-
-    def write_to_h_one(path, file_name, foot_str="", foot_sizestr=""):
-        file = path + file_name + ".jpg"
-        num = 0
-        re_str = "const uint8_t " + \
-            f"{file_name}[] PROGMEM = " + "{\n\t"
-        binfile = open(file, 'rb')  # 打开二进制文件
-        size = os.path.getsize(file)  # 获得文件大小
-        foot_str += f"{file_name}"
-        foot_sizestr += f"{size}"
-        for _ in range(size):
-            data = binfile.read(1)  # 每次输出一个字节
-            # print(_10to16(data[0]), "", end="")
-            re_str = re_str + _10to16(data[0])
-            num += 1
-            if num == 16:
-                # break
-                re_str = re_str + "\n\t"
-                num = 0
-        binfile.close()
-        re_str = re_str + "\n};\n"
-        return re_str, foot_str, foot_sizestr
-
-    os_list = os.listdir(path)
-    foot_str = f"const uint8_t *{file_name}[{len(os_list)}] PROGMEM " + "{"
-    foot_sizestr = f"const uint32_t {file_name}_size[{len(os_list)}] PROGMEM " + "{"
-    with open(f"{local_path}{file_name}.h",'w') as a:
-        a.write("#include <pgmspace.h> \n")
-        for i in os_list:
-            file_name = i.split('.')[0]
-            content, foot_str, foot_sizestr = write_to_h_one(path, file_name, foot_str, foot_sizestr)
-            a.write(content)
-            if i != os_list[-1]:
-                foot_str += f","
-                foot_sizestr += f","
-        foot_str += "};\n"
-        foot_sizestr += "};\n"
-        a.write(foot_str)
-        a.write(foot_sizestr)
-
-def init(file_name_all):
-    if file_name_all.split(".")[1] == "gif":
-        file_name = file_name_all.split(".")[0]
-        path = local_path + f"imgs/{file_name}/"
-        print("文件名", file_name)
-        parseGIF(file_name_all)
-        try_path(f"{path}/png/")
-        try_path(f"{path}/jpg/")
-        png_to_jpg(f"{path}/png/", file_name)
-        write_to_h(f"{path}/jpg/", file_name)
-    else:
-        exit("格式错误，请检查是否为GIF")
+def main() -> None:
+    args = _build_parser().parse_args()
+    init(
+        args.gif,
+        output_file=args.output,
+        max_size=args.max_size,
+        jpeg_quality=args.quality,
+        sample_every=args.sample_every,
+        save_preview=not args.no_preview,
+    )
 
 
 if __name__ == "__main__":
-    # 把GIF放到py文件旁边。默认只支持正方形的图片，不是正方形的自己改图片大小
-    file_name = "miku.gif"
-    init(file_name)
-    # file_name = file_name.split(".")[0]
-    # path = local_path + f"imgs/{file_name}/"
-    # print("文件名", file_name)
-    # write_to_h(f"{path}/jpg/", file_name)
+    main()

@@ -30,11 +30,9 @@
 
 class WeatherNum
 {
-private:
-
-
 public:
-  void printfweather(int numx,int numy,int numw);
+  void draw(int16_t x, int16_t y, int weatherCode);
+  void printfweather(int numx, int numy, int numw) { draw(numx, numy, numw); }
 };
 
 

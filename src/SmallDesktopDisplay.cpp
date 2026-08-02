@@ -39,14 +39,15 @@
 #include <Button2.h>                //按钮库
 #include <Thread.h>                 //协程
 #include <StaticThreadController.h> //协程控制
+#include <limits.h>
 
 #include "config.h"                  //配置文件
 #include "weatherNum/weatherNum.h"   //天气图库
 #include "Animate/Animate.h"         //动画模块
-#include "wifiReFlash/wifiReFlash.h" //WIFI功能模块
 #include "font/font_td_20.h"         //字体库
+#include "core/DisplayLogic.h"       //纯逻辑与边界校验
 
-#define Version "SDD V1.4.3 MOD"
+#define Version "SDD V1.5.0"
 /* *****************************************************************
  *  配置使能位
  * *****************************************************************/
@@ -81,19 +82,16 @@ void sendNTPpacket(IPAddress &address); // 向NTP服务器发送请求
 time_t getNtpTime();                    // 从NTP获取时间
 
 // void digitalClockDisplay(int reflash_en);
-void printDigits(int digits);
-String num2str(int digits);
-void LCD_reflash();
 void savewificonfig();         // wifi ssid，psw保存到eeprom
 void readwificonfig();         // 从eeprom读取WiFi信息ssid，psw
 void deletewificonfig();       // 删除原有eeprom中的信息
 void getCityCode();            // 发送HTTP请求并且将服务器响应通过串口输出
-void getCityWeater();          // 获取城市天气
+void getCityWeather();          // 获取城市天气
 void wifi_reset(Button2 &btn); // WIFI重设
 void saveParamCallback();
-void esp_reset(Button2 &btn);
+void cycle_brightness(Button2 &btn);
 void scrollBanner();
-void weaterData(String *cityDZ, String *dataSK, String *dataFC); // 天气信息写到屏幕上
+bool weatherData(const String &cityDZ, const String &dataSK, const String &dataFC); // 天气信息写到屏幕上
 void refresh_AnimatedImage();                                    // 更新右下角
 void getTD();
 void saveTDKeytoEEP(String td_api_key);
@@ -102,6 +100,15 @@ void openWifi();
 void closeWifi();
 void reflashTime();
 void updateWeatherInterval();
+bool parseStrictInt(const String &text, int &value);
+void applyBacklight(int brightness);
+void printDeviceStatus();
+bool isValidTianApiKey(const String &key);
+void digitalClockDisplay(int reflash_en);
+void reflashBanner();
+extern int Hour_sign;
+extern int Minute_sign;
+extern int Second_sign;
 
 // 创建时间更新函数线程
 Thread reflash_time = Thread();
@@ -112,9 +119,6 @@ Thread reflash_openWifi = Thread();
 // 创建动画绘制线程
 Thread reflash_Animate = Thread();
 
-// 联网后所有需要更新的数据
-Thread WIFI_reflash = Thread();
-
 // 创建协程池
 StaticThreadController<4> controller(&reflash_time, &reflash_Banner, &reflash_openWifi, &reflash_Animate);
 
@@ -123,26 +127,25 @@ StaticThreadController<4> controller(&reflash_time, &reflash_Banner, &reflash_op
  * *****************************************************************/
 struct config_type
 {
-  char stassid[32]; // 定义配网得到的WIFI名长度(最大32字节)
-  char stapsw[64];  // 定义配网得到的WIFI密码长度(最大64字节)
+  char stassid[33]; // 32字节SSID + C字符串结尾
+  char stapsw[65];  // 64字节PSK + C字符串结尾
 };
 //---------------修改此处""内的信息--------------------
 // 如开启WEB配网则可不用设置这里的参数，前一个为wifi ssid，后一个为密码
 config_type wificonf = {{"WiFi名"}, {"密码"}};
 
 // 天气更新时间  X 分钟
-unsigned int updateweater_time = 1;
+unsigned int weatherUpdateIntervalMinutes = DEFAULT_WEATHER_INTERVAL_MINUTES;
 
 //----------------------------------------------------
 
 void updateWeatherInterval()
 {
-  // 合法值区间保护，默认回落到 10 分钟
-  if (updateweater_time < 1 || updateweater_time > 60)
+  if (!sdd::isValidWeatherInterval(weatherUpdateIntervalMinutes))
   {
-    updateweater_time = 10;
+    weatherUpdateIntervalMinutes = DEFAULT_WEATHER_INTERVAL_MINUTES;
   }
-  reflash_openWifi.setInterval(updateweater_time * 60 * TMS);
+  reflash_openWifi.setInterval(static_cast<unsigned long>(weatherUpdateIntervalMinutes) * 60UL * TMS);
 }
 
 // LCD屏幕相关设置
@@ -155,26 +158,43 @@ uint16_t bgColor = 0x0000;
 int LCD_Rotation = 0;        // LCD屏幕方向
 int LCD_BL_PWM = 50;         // 屏幕亮度0-100，默认50
 uint8_t Wifi_en = 1;         // WIFI模块启动  1：打开    0：关闭
-uint8_t UpdateWeater_en = 0; // 更新时间标志位
 int prevTime = 0;            // 滚动显示更新标志位
 int DHT_img_flag = 0;        // DHT传感器使用标志位
 
 // EEPROM参数存储地址位
-int BL_addr = 1;    // 被写入数据的EEPROM地址编号  1亮度
-int Ro_addr = 2;    // 被写入数据的EEPROM地址编号  2 旋转方向
-int DHT_addr = 3;   // 3 DHT使能标志位
-int CC_addr = 10;   // 被写入数据的EEPROM地址编号  10城市
-int wifi_addr = 30; // 被写入数据的EEPROM地址编号  20wifi-ssid-psw
-int td_key_addr = 130;
+constexpr int BL_addr = 1;
+constexpr int Ro_addr = 2;
+constexpr int DHT_addr = 3;
+constexpr int WeatherInterval_addr = 4;
+constexpr int CC_addr = 10;
+constexpr int wifi_addr = 30;
+constexpr int td_key_addr = 130;
+constexpr size_t STORED_SSID_BYTES = 32;
+constexpr size_t STORED_PSK_BYTES = 64;
+constexpr int WifiMagic_addr = 126;
+constexpr int WifiVersion_addr = 127;
+constexpr int WifiCrc_addr = 128;
+constexpr uint8_t WIFI_CONFIG_MAGIC = 0xA5;
+constexpr uint8_t WIFI_CONFIG_VERSION = 1;
 
-time_t prevDisplay = 0;       // 显示时间显示记录
+uint16_t wifiConfigCrcFromEeprom()
+{
+  uint16_t crc = 0xFFFF;
+  for (size_t i = 0; i < STORED_SSID_BYTES + STORED_PSK_BYTES; i++)
+  {
+    crc ^= static_cast<uint16_t>(EEPROM.read(wifi_addr + i)) << 8;
+    for (uint8_t bit = 0; bit < 8; bit++)
+      crc = (crc & 0x8000) ? static_cast<uint16_t>((crc << 1) ^ 0x1021) : static_cast<uint16_t>(crc << 1);
+  }
+  return crc;
+}
+
 int Amimate_reflash_Time = 0; // 更新时间记录
 String TD_key = "";           // 天地图密钥
 
 /*** Component objects ***/
 WeatherNum wrat;
 
-uint32_t targetTime = 0;
 String defcityCode = "101020200"; // 默认天气城市代码
 String cityCode = defcityCode; // 天气城市代码
 int tempnum = 0;               // 温度百分比
@@ -183,14 +203,18 @@ int tempcol = 0xffff;          // 温度显示颜色
 int humicol = 0xffff;          // 湿度显示颜色
 
 // NTP服务器参数
-static const char ntpServerName[] = "ntp6.aliyun.com";
+static const char *const ntpServerNames[] = {
+    "ntp.aliyun.com",
+    "ntp.tencent.com",
+    "pool.ntp.org",
+};
 const int timeZone = 8; // 东八区
 
 // wifi连接UDP设置参数
 WiFiUDP Udp;
 WiFiClient wificlient;
 unsigned int localPort = 8000;
-float duty = 0;
+unsigned long wifiWakeStartedAt = 0;
 
 // 星期
 String week()
@@ -266,15 +290,23 @@ void mySerialPrintln() {
 // wifi ssid，psw保存到eeprom
 void savewificonfig()
 {
-  // 开始写入
-  uint8_t *p = (uint8_t *)(&wificonf);
-  for (unsigned int i = 0; i < sizeof(wificonf); i++)
+  // Keep the legacy 32 + 64 byte EEPROM layout while using terminated RAM
+  // buffers. This preserves settings written by earlier firmware versions.
+  for (size_t i = 0; i < STORED_SSID_BYTES; i++)
   {
-    EEPROM.write(i + wifi_addr, *(p + i)); // 在闪存内模拟写入
+    EEPROM.write(wifi_addr + i, i < strlen(wificonf.stassid) ? wificonf.stassid[i] : 0);
   }
-  delay(10);
-  EEPROM.commit(); // 执行写入ROM
-  delay(10);
+  for (size_t i = 0; i < STORED_PSK_BYTES; i++)
+  {
+    EEPROM.write(wifi_addr + STORED_SSID_BYTES + i,
+                 i < strlen(wificonf.stapsw) ? wificonf.stapsw[i] : 0);
+  }
+  const uint16_t crc = wifiConfigCrcFromEeprom();
+  EEPROM.write(WifiMagic_addr, WIFI_CONFIG_MAGIC);
+  EEPROM.write(WifiVersion_addr, WIFI_CONFIG_VERSION);
+  EEPROM.write(WifiCrc_addr, crc & 0xFF);
+  EEPROM.write(WifiCrc_addr + 1, crc >> 8);
+  EEPROM.commit();
 }
 
 // TFT屏幕输出函数
@@ -336,7 +368,7 @@ void tempWin()
   clk.createSprite(52, 6);                         // 创建窗口
   clk.fillSprite(0x0000);                          // 填充率
   clk.drawRoundRect(0, 0, 52, 6, 3, 0xFFFF);       // 空心圆角矩形  起始位x,y,长度，宽度，圆弧半径，颜色
-  clk.fillRoundRect(1, 1, tempnum, 4, 2, tempcol); // 实心圆角矩形
+  clk.fillRoundRect(1, 1, constrain(tempnum, 0, 50), 4, 2, tempcol); // 实心圆角矩形
   clk.pushSprite(45, 192);                         // 窗口位置
   clk.deleteSprite();
 }
@@ -347,6 +379,11 @@ void IndoorTem()
 {
   float t = dht.readTemperature();
   float h = dht.readHumidity();
+  if (isnan(t) || isnan(h))
+  {
+    mySerialPrintln("DHT11 read failed; retaining previous values");
+    return;
+  }
   String s = "内温";
   /***绘制相关文字***/
   clk.setColorDepth(8);
@@ -391,11 +428,11 @@ void IndoorTem()
 void SmartConfig(void)
 {
   WiFi.mode(WIFI_STA); // 设置STA模式
-  // tft.pushImage(0, 0, 240, 240, qr);
-  tft.pushImage(0, 0, 240, 240, qr);
+  tft.fillScreen(TFT_BLACK);
   mySerialPrintln("\r\nWait for Smartconfig..."); // 打印log信息
   WiFi.beginSmartConfig();                       // 开始SmartConfig，等待手机端发出用户名和密码
-  while (1)
+  const unsigned long smartConfigStartedAt = millis();
+  while (millis() - smartConfigStartedAt < CONFIG_PORTAL_TIMEOUT_SECONDS * 1000UL)
   {
     mySerialPrint(".");
     delay(100);                 // wait for a second
@@ -403,15 +440,75 @@ void SmartConfig(void)
     {
       mySerialPrintln("SmartConfig Success");
       Serial.printf("SSID:%s\r\n", WiFi.SSID().c_str());
-      Serial.printf("PSW:%s\r\n", WiFi.psk().c_str());
       break;
     }
   }
+  if (!WiFi.smartConfigDone())
+    mySerialPrintln("SmartConfig timed out; continuing with cached display");
+  WiFi.stopSmartConfig();
   loadNum = 194;
 }
 #endif
 
 String SMOD = ""; // 0亮度
+
+bool parseStrictInt(const String &text, int &value)
+{
+  String normalized = text;
+  normalized.trim();
+  if (normalized.length() == 0)
+    return false;
+
+  char *end = nullptr;
+  const long parsed = strtol(normalized.c_str(), &end, 10);
+  if (end == normalized.c_str() || *end != '\0' || parsed < INT_MIN || parsed > INT_MAX)
+    return false;
+  value = static_cast<int>(parsed);
+  return true;
+}
+
+void applyBacklight(int brightness)
+{
+  LCD_BL_PWM = constrain(brightness, 0, 100);
+  analogWrite(LCD_BL_PIN, sdd::brightnessToPwm(LCD_BL_PWM));
+}
+
+void printDeviceStatus()
+{
+  mySerialPrintln("--- SmallDesktopDisplay status ---");
+  mySerialPrint("Version: ");
+  mySerialPrintln(Version);
+  mySerialPrint("Uptime ms: ");
+  mySerialPrintln(millis());
+  mySerialPrint("Free heap: ");
+  mySerialPrintln(ESP.getFreeHeap());
+  mySerialPrint("WiFi: ");
+  mySerialPrintln(WiFi.status() == WL_CONNECTED ? "connected" : "disconnected");
+  mySerialPrint("City code: ");
+  mySerialPrintln(cityCode);
+  mySerialPrint("Weather interval: ");
+  mySerialPrint(weatherUpdateIntervalMinutes);
+  mySerialPrintln(" min");
+  mySerialPrint("Brightness / rotation: ");
+  mySerialPrint(LCD_BL_PWM);
+  mySerialPrint(" / ");
+  mySerialPrintln(LCD_Rotation);
+  mySerialPrint("TianAPI key: ");
+  mySerialPrintln(TD_key.length() == 32 ? "configured" : "not configured");
+}
+
+bool isValidTianApiKey(const String &key)
+{
+  if (key.length() != 32)
+    return false;
+  for (size_t i = 0; i < key.length(); i++)
+  {
+    if (!isAlphaNumeric(key[i]))
+      return false;
+  }
+  return true;
+}
+
 // 串口调试设置函数
 void Serial_set()
 {
@@ -428,6 +525,18 @@ void Serial_set()
     incomingByte.trim();
     if (incomingByte.length() == 0) return;
 
+    if (SMOD.length() == 0 && incomingByte == "0x00")
+    {
+      printDeviceStatus();
+      return;
+    }
+    if (SMOD.length() == 0 && incomingByte == "0x08")
+    {
+      mySerialPrintln("Weather refresh scheduled");
+      openWifi();
+      return;
+    }
+
     // 支持一次性命令和参数，例如: "0x01 80" 或 "0x01=80"
     int sep = incomingByte.indexOf(' ');
     if (sep < 0) sep = incomingByte.indexOf('=');
@@ -441,13 +550,12 @@ void Serial_set()
       // 直接处理常见一次性命令，避免交互两步
       if (cmd == "0x01") // 亮度
       {
-        int LCDBL = atoi(arg.c_str());
-        if (LCDBL >= 0 && LCDBL <= 100)
+        int LCDBL = 0;
+        if (parseStrictInt(arg, LCDBL) && sdd::isValidBrightness(LCDBL))
         {
           EEPROM.write(BL_addr, LCDBL);
           EEPROM.commit();
-          LCD_BL_PWM = EEPROM.read(BL_addr);
-          analogWrite(LCD_BL_PIN, 1023 - (LCD_BL_PWM * 10));
+          applyBacklight(LCDBL);
           mySerialPrintln("亮度调整为：");
           mySerialPrintln(LCD_BL_PWM);
         }
@@ -456,16 +564,67 @@ void Serial_set()
       }
       else if (cmd == "0x02") // 城市代码一次性设置
       {
-        int CityC = atoi(arg.c_str());
-        if (((CityC >= 101000000) && (CityC <= 102000000)) || (CityC == 0))
+        int CityC = 0;
+        if (parseStrictInt(arg, CityC) && sdd::isValidCityCode(CityC))
         {
+          int storedCity = CityC;
           for (int cnum = 0; cnum < 5; cnum++)
-            EEPROM.write(CC_addr + cnum, CityC % 100), CityC = CityC / 100;
+            EEPROM.write(CC_addr + cnum, storedCity % 100), storedCity = storedCity / 100;
           EEPROM.commit();
           mySerialPrintln("城市代码已设置");
-          getCityWeater();
+          if (CityC == 0)
+            getCityCode();
+          else
+          {
+            cityCode = String(CityC);
+            if (WiFi.status() == WL_CONNECTED)
+              getCityWeather();
+          }
         }
         else mySerialPrintln("城市调整错误，请输入9位城市代码，自动获取请输入0");
+        return;
+      }
+      else if (cmd == "0x03")
+      {
+        int rotation = 0;
+        if (parseStrictInt(arg, rotation) && sdd::isValidRotation(rotation))
+        {
+          LCD_Rotation = rotation;
+          EEPROM.write(Ro_addr, rotation);
+          EEPROM.commit();
+          tft.setRotation(rotation);
+          tft.fillScreen(TFT_BLACK);
+          Hour_sign = Minute_sign = Second_sign = 60;
+          digitalClockDisplay(1);
+          reflashBanner();
+          mySerialPrintln("Screen orientation updated");
+        }
+        else mySerialPrintln("Screen orientation must be 0-3");
+        return;
+      }
+      else if (cmd == "0x04")
+      {
+        int interval = 0;
+        if (parseStrictInt(arg, interval) && sdd::isValidWeatherInterval(interval))
+        {
+          weatherUpdateIntervalMinutes = interval;
+          updateWeatherInterval();
+          EEPROM.write(WeatherInterval_addr, interval);
+          EEPROM.commit();
+          mySerialPrintln("Weather interval updated");
+        }
+        else mySerialPrintln("Weather interval must be 1-60 minutes");
+        return;
+      }
+      else if (cmd == "0x06")
+      {
+        if (isValidTianApiKey(arg))
+        {
+          saveTDKeytoEEP(arg);
+          readTDKeyfromEEP();
+          mySerialPrintln("TianAPI key updated");
+        }
+        else mySerialPrintln("TianAPI key must contain 32 characters");
         return;
       }
       else if (cmd == "0x07") // 立即更新时间
@@ -479,8 +638,8 @@ void Serial_set()
 
     if (SMOD == "0x01") // 设置1亮度设置
     {
-      int LCDBL = atoi(incomingByte.c_str()); // int n = atoi(xxx.c_str());//String转int
-      if (LCDBL >= 0 && LCDBL <= 100)
+      int LCDBL = 0;
+      if (parseStrictInt(incomingByte, LCDBL) && sdd::isValidBrightness(LCDBL))
       {
         EEPROM.write(BL_addr, LCDBL); // 亮度地址写入亮度值
         EEPROM.commit();              // 保存更改的数据
@@ -489,7 +648,7 @@ void Serial_set()
         delay(5);
         SMOD = "";
         Serial.printf("亮度调整为：");
-        analogWrite(LCD_BL_PIN, 1023 - (LCD_BL_PWM * 10));
+        applyBacklight(LCD_BL_PWM);
         mySerialPrintln(LCD_BL_PWM);
         mySerialPrintln("");
       }
@@ -500,8 +659,8 @@ void Serial_set()
     if (SMOD == "0x02") // 设置2地址设置
     {
       long CityCODE = 0;
-      int CityC = atoi(incomingByte.c_str()); // int n = atoi(xxx.c_str());//String转int
-      if (((CityC >= 101000000) && (CityC <= 102000000)) || (CityC == 0))
+      int CityC = 0;
+      if (parseStrictInt(incomingByte, CityC) && sdd::isValidCityCode(CityC))
       {
         for (int cnum = 0; cnum < 5; cnum++)
         {
@@ -528,7 +687,7 @@ void Serial_set()
         Serial.printf("城市代码调整为：");
         mySerialPrintln(cityCode);
         mySerialPrintln("");
-        getCityWeater(); // 更新城市天气
+        getCityWeather(); // 更新城市天气
         SMOD = "";
       }
       else
@@ -537,8 +696,8 @@ void Serial_set()
     }
     if (SMOD == "0x03") // 设置3屏幕显示方向
     {
-      int RoSet = atoi(incomingByte.c_str());
-      if (RoSet >= 0 && RoSet <= 3)
+      int RoSet = 0;
+      if (parseStrictInt(incomingByte, RoSet) && sdd::isValidRotation(RoSet))
       {
         EEPROM.write(Ro_addr, RoSet); // 屏幕方向地址写入方向值
         EEPROM.commit();              // 保存更改的数据
@@ -546,8 +705,9 @@ void Serial_set()
         // 设置屏幕方向后重新刷屏并显示
         tft.setRotation(RoSet);
         tft.fillScreen(0x0000);
-        LCD_reflash(); // 屏幕刷新程序
-        UpdateWeater_en = 1;
+        Hour_sign = Minute_sign = Second_sign = 60;
+        digitalClockDisplay(1);
+        reflashBanner();
         TJpgDec.drawJpg(15, 183, temperature, sizeof(temperature)); // 温度图标
         TJpgDec.drawJpg(15, 213, humidity, sizeof(humidity));       // 湿度图标
 
@@ -562,14 +722,16 @@ void Serial_set()
     }
     if (SMOD == "0x04") // 设置天气更新时间
     {
-      int wtup = atoi(incomingByte.c_str()); // int n = atoi(xxx.c_str());//String转int
-      if (wtup >= 1 && wtup <= 60)
+      int wtup = 0;
+      if (parseStrictInt(incomingByte, wtup) && sdd::isValidWeatherInterval(wtup))
       {
-        updateweater_time = wtup;
+        weatherUpdateIntervalMinutes = wtup;
         updateWeatherInterval();
+        EEPROM.write(WeatherInterval_addr, wtup);
+        EEPROM.commit();
         SMOD = "";
         Serial.printf("Weather update time changed to：");
-        mySerialPrint(updateweater_time);
+        mySerialPrint(weatherUpdateIntervalMinutes);
         mySerialPrintln("minutes");
       }
       else
@@ -578,14 +740,13 @@ void Serial_set()
     }
     if (SMOD == "0x06")
     {
-      if (incomingByte.length() == 32)
+      if (isValidTianApiKey(incomingByte))
       {
         saveTDKeytoEEP(incomingByte);
         SMOD = "";
         mySerialPrintln("TD KEY set successfully");
         readTDKeyfromEEP();
-        mySerialPrint("TD KEY:");
-        mySerialPrintln(TD_key);
+        mySerialPrintln("TD KEY loaded");
         getTD();
       }
       else
@@ -614,7 +775,7 @@ void Serial_set()
     else if (SMOD == "0x04")
     {
       mySerialPrint("Current weather update time:");
-      mySerialPrint(updateweater_time);
+      mySerialPrint(weatherUpdateIntervalMinutes);
       mySerialPrintln("minutes");
       mySerialPrintln("Please enter the weather update time (1-60) minutes");
     }
@@ -622,7 +783,11 @@ void Serial_set()
     {
       mySerialPrintln("Reset WiFi settings in ......");
       delay(10);
+#if WM_EN
       wm.resetSettings();
+#else
+      WiFi.disconnect(true);
+#endif
       deletewificonfig();
       delay(10);
       mySerialPrintln("Successful WiFi setup");
@@ -654,6 +819,8 @@ void Serial_set()
       mySerialPrintln("Reset WiFi (it will reboot) 0x05");
       mySerialPrintln("Input TD KEY 0x06");
       mySerialPrintln("Reset Time 0x07");
+      mySerialPrintln("Show device status 0x00");
+      mySerialPrintln("Refresh weather now 0x08");
       mySerialPrintln("Rebooting the device 0x99");
       mySerialPrintln("");
     }
@@ -674,7 +841,7 @@ void Web_win()
   clk.drawString("WiFi Connect Fail!", 100, 10, 2);
   clk.drawString("SSID:", 45, 40, 2);
   clk.setTextColor(TFT_WHITE, 0x0000);
-  clk.drawString("AutoConnectAP", 125, 40, 2);
+  clk.drawString("SmallDisplay-" + String(ESP.getChipId(), HEX), 135, 40, 2);
   clk.pushSprite(20, 50); // 窗口位置
 
   clk.deleteSprite();
@@ -684,9 +851,8 @@ void Web_win()
 void Webconfig()
 {
   WiFi.mode(WIFI_STA); // explicitly set mode, esp defaults to STA+AP
-
-  delay(3000);
-  wm.resetSettings(); // wipe settings
+  wm.setConfigPortalTimeout(CONFIG_PORTAL_TIMEOUT_SECONDS);
+  wm.setConnectTimeout(WIFI_CONNECT_TIMEOUT_MS / 1000UL);
 
   // add a custom input field
   // int customFieldLength = 40;
@@ -700,18 +866,36 @@ void Webconfig()
   // const char* custom_radio_str = "<br/><label for='customfieldid'>Custom Field Label</label><input type='radio' name='customfieldid' value='1' checked> One<br><input type='radio' name='customfieldid' value='2'> Two<br><input type='radio' name='customfieldid' value='3'> Three";
   // new (&custom_field) WiFiManagerParameter(custom_radio_str); // custom html input
 
-  const char *set_rotation = "<br/><label for='set_rotation'>显示方向设置</label>\
-                              <input type='radio' name='set_rotation' value='0' checked> USB接口朝下<br>\
-                              <input type='radio' name='set_rotation' value='1'> USB接口朝右<br>\
-                              <input type='radio' name='set_rotation' value='2'> USB接口朝上<br>\
-                              <input type='radio' name='set_rotation' value='3'> USB接口朝左<br>";
-  WiFiManagerParameter custom_rot(set_rotation); // custom html input
-  WiFiManagerParameter custom_bl("LCDBL", "屏幕亮度（1-100）", "10", 3);
+  String rotationOptions = "<br/><label for='set_rotation'>显示方向设置</label>";
+  const char *rotationLabels[] = {"USB接口朝下", "USB接口朝右", "USB接口朝上", "USB接口朝左"};
+  for (int rotation = 0; rotation < 4; rotation++)
+  {
+    rotationOptions += "<input type='radio' name='set_rotation' value='" + String(rotation) + "'";
+    if (rotation == LCD_Rotation)
+      rotationOptions += " checked";
+    rotationOptions += "> " + String(rotationLabels[rotation]) + "<br>";
+  }
+  WiFiManagerParameter custom_rot(rotationOptions.c_str()); // custom html input
+  char brightnessValue[4];
+  char intervalValue[4];
+  char cityValue[10];
+  snprintf(brightnessValue, sizeof(brightnessValue), "%d", LCD_BL_PWM);
+  snprintf(intervalValue, sizeof(intervalValue), "%u", weatherUpdateIntervalMinutes);
+  long storedCityCode = 0;
+  for (int cnum = 5; cnum > 0; cnum--)
+  {
+    storedCityCode = storedCityCode * 100 + EEPROM.read(CC_addr + cnum - 1);
+  }
+  snprintf(cityValue, sizeof(cityValue), "%ld",
+           sdd::isValidCityCode(storedCityCode) ? storedCityCode : 0L);
+  WiFiManagerParameter custom_bl("LCDBL", "屏幕亮度（0-100）", brightnessValue, 3);
 #if DHT_EN
-  WiFiManagerParameter custom_DHT11_en("DHT11_en", "Enable DHT11 sensor", "0", 1);
+  char dhtEnabledValue[2];
+  snprintf(dhtEnabledValue, sizeof(dhtEnabledValue), "%d", DHT_img_flag == 1 ? 1 : 0);
+  WiFiManagerParameter custom_DHT11_en("DHT11_en", "Enable DHT11 sensor", dhtEnabledValue, 1);
 #endif
-  WiFiManagerParameter custom_weatertime("WeaterUpdateTime", "天气刷新时间（分钟）", "10", 3);
-  WiFiManagerParameter custom_cc("CityCode", "城市代码", "0", 9);
+  WiFiManagerParameter custom_weatertime("WeatherUpdateTime", "天气刷新时间（分钟）", intervalValue, 3);
+  WiFiManagerParameter custom_cc("CityCode", "城市代码", cityValue, 9);
   WiFiManagerParameter p_lineBreak_notext("<p></p>");
 
   // wm.addParameter(&p_lineBreak_notext);
@@ -746,8 +930,6 @@ void Webconfig()
   //  wm.setShowStaticFields(true); // force show static ip fields
   //  wm.setShowDnsFields(true);    // force show dns field always
 
-  // wm.setConnectTimeout(20); // how long to try to connect for before continuing
-  //  wm.setConfigPortalTimeout(30); // auto close configportal after n seconds
   // wm.setCaptivePortalEnable(false); // disable captive portal redirection
   // wm.setAPClientCheck(true); // avoid timeout if client connected to softap
 
@@ -761,7 +943,8 @@ void Webconfig()
 
   bool res;
   // res = wm.autoConnect(); // auto generated AP name from chipid
-  res = wm.autoConnect("AutoConnectAP"); // anonymous ap
+  String apName = "SmallDisplay-" + String(ESP.getChipId(), HEX);
+  res = wm.autoConnect(apName.c_str());
   //  res = wm.autoConnect("AutoConnectAP","password"); // password protected ap
 
   if (!res)
@@ -786,35 +969,55 @@ String getParam(String name)
   return value;
 }
 
+#endif // WM_EN
+
 // 删除原有eeprom中的信息
 void deletewificonfig()
 {
-  config_type deletewifi = {{""}, {""}};
-  uint8_t *p = (uint8_t *)(&deletewifi);
-  for (unsigned int i = 0; i < sizeof(deletewifi); i++)
+  memset(&wificonf, 0, sizeof(wificonf));
+  for (size_t i = 0; i < STORED_SSID_BYTES + STORED_PSK_BYTES; i++)
   {
-    EEPROM.write(i + wifi_addr, *(p + i)); // 在闪存内模拟写入
+    EEPROM.write(wifi_addr + i, 0);
   }
-  delay(10);
-  EEPROM.commit(); // 执行写入ROM
-  delay(10);
+  EEPROM.write(WifiMagic_addr, 0);
+  EEPROM.write(WifiVersion_addr, 0);
+  EEPROM.write(WifiCrc_addr, 0);
+  EEPROM.write(WifiCrc_addr + 1, 0);
+  EEPROM.commit();
 }
 
 // 从eeprom读取WiFi信息ssid，psw
 void readwificonfig()
 {
-  uint8_t *p = (uint8_t *)(&wificonf);
-  for (unsigned int i = 0; i < sizeof(wificonf); i++)
+  memset(&wificonf, 0, sizeof(wificonf));
+  if (EEPROM.read(WifiMagic_addr) == WIFI_CONFIG_MAGIC)
   {
-    *(p + i) = EEPROM.read(i + wifi_addr);
+    const uint16_t storedCrc = EEPROM.read(WifiCrc_addr) |
+                               (static_cast<uint16_t>(EEPROM.read(WifiCrc_addr + 1)) << 8);
+    if (EEPROM.read(WifiVersion_addr) != WIFI_CONFIG_VERSION ||
+        storedCrc != wifiConfigCrcFromEeprom())
+    {
+      mySerialPrintln("Stored WiFi configuration failed integrity validation");
+      deletewificonfig();
+      return;
+    }
   }
-  // EEPROM.commit();
-  // ssid = wificonf.stassid;
-  // pass = wificonf.stapsw;
-  Serial.printf("Read WiFi Config.....\r\n");
-  Serial.printf("SSID:%s\r\n", wificonf.stassid);
-  Serial.printf("PSW:%s\r\n", wificonf.stapsw);
-  Serial.printf("Connecting.....\r\n");
+  for (size_t i = 0; i < STORED_SSID_BYTES; i++)
+  {
+    const uint8_t value = EEPROM.read(wifi_addr + i);
+    if (value == 0 || value == 0xFF)
+      break;
+    wificonf.stassid[i] = static_cast<char>(value);
+  }
+  for (size_t i = 0; i < STORED_PSK_BYTES; i++)
+  {
+    const uint8_t value = EEPROM.read(wifi_addr + STORED_SSID_BYTES + i);
+    if (value == 0 || value == 0xFF)
+      break;
+    wificonf.stapsw[i] = static_cast<char>(value);
+  }
+  mySerialPrint("Stored WiFi SSID: ");
+  mySerialPrintln(strlen(wificonf.stassid) ? wificonf.stassid : "<not configured>");
 }
 
 void saveTDKeytoEEP(String td_api_key)
@@ -824,15 +1027,10 @@ void saveTDKeytoEEP(String td_api_key)
   {
     char v = (static_cast<size_t>(cnum) < keyLen) ? td_api_key[cnum] : '\0';
     EEPROM.write(td_key_addr + cnum, v);
-    if (static_cast<size_t>(cnum) < keyLen)
-    {
-      mySerialPrint(v);
-    }
   }
   // 一次性提交，减少擦写次数
   EEPROM.commit();
   delay(5);
-  mySerialPrintln("");
 }
 void readTDKeyfromEEP()
 {
@@ -848,45 +1046,64 @@ void readTDKeyfromEEP()
   }
 }
 
+#if WM_EN
 void saveParamCallback()
 {
-  int CCODE = 0, cc;
+  int CCODE = 0;
+  int cc = 0;
+  int newRotation = 0;
+  int newBrightness = 0;
+  int newWeatherInterval = 0;
+#if DHT_EN
+  int newDhtEnabled = 0;
+#endif
 
   mySerialPrintln("[CALLBACK] saveParamCallback fired");
   // mySerialPrintln("PARAM customfieldid = " + getParam("customfieldid"));
   // mySerialPrintln("PARAM CityCode = " + getParam("CityCode"));
   // mySerialPrintln("PARAM LCD BackLight = " + getParam("LCDBL"));
-  // mySerialPrintln("PARAM WeaterUpdateTime = " + getParam("WeaterUpdateTime"));
+  // mySerialPrintln("PARAM WeatherUpdateTime = " + getParam("WeatherUpdateTime"));
   // mySerialPrintln("PARAM Rotation = " + getParam("set_rotation"));
   // mySerialPrintln("PARAM DHT11_en = " + getParam("DHT11_en"));
-// 将从页面中获取的数据保存
+  const bool valid = parseStrictInt(getParam("CityCode"), cc) && sdd::isValidCityCode(cc) &&
+                     parseStrictInt(getParam("set_rotation"), newRotation) && sdd::isValidRotation(newRotation) &&
+                     parseStrictInt(getParam("LCDBL"), newBrightness) && sdd::isValidBrightness(newBrightness) &&
+                     parseStrictInt(getParam("WeatherUpdateTime"), newWeatherInterval) &&
+                         sdd::isValidWeatherInterval(newWeatherInterval)
 #if DHT_EN
-  DHT_img_flag = getParam("DHT11_en").toInt();
+                     && parseStrictInt(getParam("DHT11_en"), newDhtEnabled) &&
+                         (newDhtEnabled == 0 || newDhtEnabled == 1)
 #endif
-  updateweater_time = getParam("WeaterUpdateTime").toInt();
+      ;
+  if (!valid)
+  {
+    mySerialPrintln("Rejected invalid configuration portal parameters");
+    return;
+  }
+
+  LCD_Rotation = newRotation;
+  LCD_BL_PWM = newBrightness;
+  weatherUpdateIntervalMinutes = newWeatherInterval;
   updateWeatherInterval();
-  cc = getParam("CityCode").toInt();
-  LCD_Rotation = getParam("set_rotation").toInt();
-  LCD_BL_PWM = getParam("LCDBL").toInt();
+#if DHT_EN
+  DHT_img_flag = newDhtEnabled;
+#endif
 
   // 对获取的数据进行处理
   // 城市代码
   mySerialPrint("CityCode = ");
   mySerialPrintln(cc);
-  if (((cc >= 101000000) && (cc <= 102000000)) || (cc == 0))
+  if (sdd::isValidCityCode(cc))
   {
     for (int cnum = 0; cnum < 5; cnum++)
     {
       EEPROM.write(CC_addr + cnum, cc % 100); // 城市地址写入城市代码
-      EEPROM.commit();                        // 保存更改的数据
       cc = cc / 100;
-      delay(5);
     }
     for (int cnum = 5; cnum > 0; cnum--)
     {
       CCODE = CCODE * 100;
       CCODE += EEPROM.read(CC_addr + cnum - 1);
-      delay(5);
     }
     cityCode = CCODE;
   }
@@ -910,11 +1127,12 @@ void saveParamCallback()
   }
   // 屏幕亮度
   Serial.printf("The brightness is adjusted to:");
-  analogWrite(LCD_BL_PIN, 1023 - (LCD_BL_PWM * 10));
+  applyBacklight(LCD_BL_PWM);
   mySerialPrintln(LCD_BL_PWM);
   // 天气更新时间
   Serial.printf("Weather updates are rescheduled:");
-  mySerialPrintln(updateweater_time);
+  mySerialPrintln(weatherUpdateIntervalMinutes);
+  EEPROM.write(WeatherInterval_addr, weatherUpdateIntervalMinutes);
 
 #if DHT_EN
   // 是否使用DHT11传感器
@@ -932,12 +1150,18 @@ void saveParamCallback()
 // 发送HTTP请求并且将服务器响应通过串口输出
 void getCityCode()
 {
+  if (WiFi.status() != WL_CONNECTED)
+  {
+    mySerialPrintln("City lookup skipped: WiFi disconnected");
+    return;
+  }
   String URL = "http://wgeo.weather.com.cn/ip/?_=" + String(now());
   // 创建 HTTPClient 对象
   HTTPClient httpClient;
 
   // 配置请求地址。此处也可以不使用端口号和PATH而单纯的
   httpClient.begin(wificlient, URL);
+  httpClient.setTimeout(WEATHER_HTTP_TIMEOUT_MS);
 
   // 设置请求头中的User-Agent
   httpClient.setUserAgent("Mozilla/5.0 (iPhone; CPU iPhone OS 11_0 like Mac OS X) AppleWebKit/604.1.38 (KHTML, like Gecko) Version/11.0 Mobile/15A372 Safari/604.1");
@@ -956,10 +1180,23 @@ void getCityCode()
     int aa = str.indexOf("id=");
     if (aa > -1)
     {
-      // cityCode = str.substring(aa+4,aa+4+9).toInt();
-      cityCode = str.substring(aa + 4, aa + 4 + 9);
-      mySerialPrintln(cityCode);
-      getCityWeater();
+      int cityStart = aa + 3;
+      while (cityStart < static_cast<int>(str.length()) &&
+             (str[cityStart] == '\'' || str[cityStart] == '"'))
+        cityStart++;
+      const String candidate = str.substring(cityStart, cityStart + 9);
+      const uint32_t candidateValue = candidate.toInt();
+      if (candidate.length() == 9 && sdd::isValidCityCode(candidateValue) && candidateValue != 0)
+      {
+        cityCode = candidate;
+        mySerialPrintln(cityCode);
+        getCityWeather();
+      }
+      else
+      {
+        mySerialPrintln("Invalid city code in lookup response");
+        cityCode = defcityCode;
+      }
     }
     else
     {
@@ -978,8 +1215,13 @@ void getCityCode()
 }
 
 // 获取城市天气
-void getCityWeater()
+void getCityWeather()
 {
+  if (WiFi.status() != WL_CONNECTED)
+  {
+    mySerialPrintln("Weather refresh skipped: WiFi disconnected");
+    return;
+  }
   // String URL = "http://d1.weather.com.cn/dingzhi/" + cityCode + ".html?_="+String(now());//新
   String URL = "http://d1.weather.com.cn/weather_index/" + cityCode + ".html?_=" + String(now()); // 原来
   // 创建 HTTPClient 对象
@@ -987,6 +1229,7 @@ void getCityWeater()
 
   // httpClient.begin(URL);
   httpClient.begin(wificlient, URL); // 使用新方法
+  httpClient.setTimeout(WEATHER_HTTP_TIMEOUT_MS);
 
   // 设置请求头中的User-Agent
   httpClient.setUserAgent("Mozilla/5.0 (iPhone; CPU iPhone OS 11_0 like Mac OS X) AppleWebKit/604.1.38 (KHTML, like Gecko) Version/11.0 Mobile/15A372 Safari/604.1");
@@ -1005,21 +1248,41 @@ void getCityWeater()
     int indexStart = str.indexOf("weatherinfo\":");
     int indexEnd = str.indexOf("};var alarmDZ");
 
+    if (indexStart < 0 || indexEnd <= indexStart)
+    {
+      mySerialPrintln("Weather response missing city markers");
+      httpClient.end();
+      return;
+    }
     String jsonCityDZ = str.substring(indexStart + 13, indexEnd);
     // mySerialPrintln(jsonCityDZ);
 
     indexStart = str.indexOf("dataSK =");
     indexEnd = str.indexOf(";var dataZS");
+    if (indexStart < 0 || indexEnd <= indexStart)
+    {
+      mySerialPrintln("Weather response missing live-data markers");
+      httpClient.end();
+      return;
+    }
     String jsonDataSK = str.substring(indexStart + 8, indexEnd);
     // mySerialPrintln(jsonDataSK);
 
     indexStart = str.indexOf("\"f\":[");
     indexEnd = str.indexOf(",{\"fa");
+    if (indexStart < 0 || indexEnd <= indexStart)
+    {
+      mySerialPrintln("Weather response missing forecast markers");
+      httpClient.end();
+      return;
+    }
     String jsonFC = str.substring(indexStart + 5, indexEnd);
     // mySerialPrintln(jsonFC);
 
-    weaterData(&jsonCityDZ, &jsonDataSK, &jsonFC);
-    mySerialPrintln("Get Success");
+    if (weatherData(jsonCityDZ, jsonDataSK, jsonFC))
+      mySerialPrintln("Get Success");
+    else
+      mySerialPrintln("Weather JSON rejected; keeping previous display");
   }
   else
   {
@@ -1035,100 +1298,65 @@ String HTTPS_request(String host, String url, String parameter = "", String fing
 {
   if (WiFi.status() != WL_CONNECTED)
   {
-    // mySerialPrintln("WiFi未连接！");
-    WiFi.begin(wificonf.stassid, wificonf.stapsw);
-    while (WiFi.status() != WL_CONNECTED)
-    {
-      delay(500);
-      // mySerialPrint(".");
-    }
-    // mySerialPrintln("WiFi连接成功！");
-  }
-  WiFiClientSecure HTTPS; // 建立WiFiClientSecure对象
-  if (parameter != "")
-    parameter = "?" + parameter;
-  String postRequest = (String)("GET ") + url + parameter + " HTTP/1.1\r\n" +
-                       "Host: " + host + "\r\n" +
-                       "User-Agent: Mozilla/5.0 (iPhone; CPU iPhone OS 13_2_3 like Mac OS X) AppleWebKit/605.1.15 (KHTML, like Gecko) Version/13.0.3 Mobile/15E148 Safari/604.1 Edg/103.0.5060.53" +
-                       "\r\n\r\n";
-  if (fingerprint.length() == 0)
-    HTTPS.setInsecure(); // 不进行服务器身份认证
-  else
-  {
-    HTTPS.setFingerprint(fingerprint.c_str()); // 服务器证书指纹进行服务器身份认证
-  }
-  int cache = postRequest.length() + 10;
-  // mySerialPrint("发送缓存：");
-  // mySerialPrintln(postRequest);
-  HTTPS.setBufferSizes(Receive_cache, cache); // 接收和发送缓存大小
-  HTTPS.setTimeout(15000);                    // 设置等待的最大毫秒数
-  // mySerialPrintln("初始化参数完毕！\n开始连接服务器==>>>>>");
-  if (!HTTPS.connect(host, Port))
-  {
-    delay(100);
-    // mySerialPrintln();
-    // mySerialPrintln("服务器连接失败！");
+    mySerialPrintln("HTTPS request skipped: WiFi disconnected");
     return "0";
   }
-  // else
-  //   mySerialPrintln("服务器连接成功！\r");
-  // mySerialPrintln("发送请求：\n");
-  HTTPS.print(postRequest.c_str()); // 发送HTTP请求
 
-  // 检查服务器响应信息。通过串口监视器输出服务器状态码和响应头信息
-  // 从而确定ESP8266已经成功连接服务器
-  // mySerialPrintln("获取响应信息========>：\r");
-  // mySerialPrintln("响应头：");
-  while (HTTPS.connected())
+  BearSSL::WiFiClientSecure client;
+  const String configuredFingerprint = fingerprint.length() ? fingerprint : String(TIANAPI_TLS_FINGERPRINT);
+  if (!configuredFingerprint.length())
   {
-    String line = HTTPS.readStringUntil('\n');
-    // mySerialPrintln(line);
-    if (line == "\r")
-    {
-      // mySerialPrintln("响应头输出完毕！"); // mySerialPrintln("响应头屏蔽完毕！\r");
-      break;
-    }
+    mySerialPrintln("TianAPI skipped: TLS fingerprint is not configured");
+    return "0";
   }
-  // mySerialPrintln("截取响应体==========>");
-  String line;
-  while (HTTPS.connected())
+  client.setFingerprint(configuredFingerprint.c_str());
+
+  client.setBufferSizes(Receive_cache, 512);
+  client.setTimeout(WEATHER_HTTP_TIMEOUT_MS);
+  if (parameter != "")
+    parameter = "?" + parameter;
+
+  const String fullUrl = "https://" + host + (Port == 443 ? "" : ":" + String(Port)) + url + parameter;
+  HTTPClient https;
+  https.setTimeout(WEATHER_HTTP_TIMEOUT_MS);
+  if (!https.begin(client, fullUrl))
+    return "0";
+  https.setUserAgent("SmallDesktopDisplay/1.5");
+  const int httpCode = https.GET();
+  String body = "0";
+  if (httpCode == HTTP_CODE_OK)
+    body = https.getString();
+  else
   {
-    line = HTTPS.readStringUntil('\n'); // mySerialPrintln(line);
-    if (line.length() > 10)
-      break;
+    mySerialPrint("HTTPS request failed, code=");
+    mySerialPrintln(httpCode);
   }
-  // mySerialPrintln("响应体信息：\n");
-  // mySerialPrintln("====================================>");
-  // mySerialPrintln("变量长度：" + String(line.length()));
-  // mySerialPrintln("变量大小：" + String(sizeof(line)) + "字节");
-  // mySerialPrintln("====================================>");
-  HTTPS.stop(); // 操作结束，断开服务器连接
-  delay(500);
-  return line;
+  https.end();
+  return body;
 }
 
-String TD_gregoriandate = "1900-01-01";
-String TD_gregoriandate_year = "1900";
-String TD_gregoriandate_month = "01";
-String TD_gregoriandate_day = "01";
-String TD_lunardate = "1900-01-01";
-String TD_lunardate_year = "1900";
-String TD_lunardate_month = "01";
-String TD_lunardate_day = "01";
-String TD_year = "year";
-String TD_month = "month";
-String TD_day = "day";
-String TD_animal = "animal";
-String TD_lubarmonth = "lubarmonth";
-String TD_lunarday = "lunarday";
+String TD_gregoriandate;
+String TD_gregoriandate_year;
+String TD_gregoriandate_month;
+String TD_gregoriandate_day;
+String TD_lunardate;
+String TD_lunardate_year;
+String TD_lunardate_month;
+String TD_lunardate_day;
+String TD_year;
+String TD_month;
+String TD_day;
+String TD_animal;
+String TD_lubarmonth;
+String TD_lunarday;
 String TD_zodiac[12] = {"鼠", "牛", "虎", "兔", "龙", "蛇",
                         "马", "羊", "猴", "鸡", "狗", "猪"};
 String TD_Earthly_Branches[12] = {"子", "丑", "寅", "卯", "辰", "巳",
                                   "午", "未", "申", "酉", "戌", "亥"};
 String TD_jieqi = "";
 // apis.tianapi.com 限流策略:
-// 1) 成功后 30 分钟再请求
-// 2) 失败后每 1 秒重试，连续 10 次失败后进入 30 分钟冷却
+// Calls are made by the network refresh cycle. This guard prevents duplicate
+// requests within one cycle and applies a bounded backoff after failures.
 unsigned long td_next_attempt_ms = 0;
 uint8_t td_consecutive_failures = 0;
 const unsigned long TD_SUCCESS_RETRY_MS = 30UL * 60UL * 1000UL;
@@ -1146,12 +1374,21 @@ String full_zodiac(const String& zodiac){
 void splitDate(const String& date, String& year, String& month, String& day) {
     int firstDash = date.indexOf('-');
     int secondDash = date.lastIndexOf('-');
+    if (firstDash <= 0 || secondDash <= firstDash + 1 || secondDash >= static_cast<int>(date.length()) - 1)
+    {
+      year = month = day = "";
+      return;
+    }
     year = date.substring(0, firstDash);
     month = date.substring(firstDash + 1, secondDash);
     day = date.substring(secondDash + 1);
 }
 void getTD()
 {
+  if (!isValidTianApiKey(TD_key))
+  {
+    return;
+  }
   unsigned long nowMs = millis();
   if ((long)(nowMs - td_next_attempt_ms) < 0)
   {
@@ -1164,8 +1401,15 @@ void getTD()
   // 如果服务器响应OK则从服务器获取响应体信息并通过串口输出
   if (str != "0" && str.length() != 0)
   {
-    DynamicJsonDocument doc(str.length() * 2);
-    deserializeJson(doc, str);
+    DynamicJsonDocument doc(2048);
+    const DeserializationError jsonError = deserializeJson(doc, str);
+    if (jsonError)
+    {
+      mySerialPrint("Invalid TianAPI JSON: ");
+      mySerialPrintln(jsonError.c_str());
+      td_next_attempt_ms = millis() + 60UL * 1000UL;
+      return;
+    }
     JsonObject sk = doc.as<JsonObject>();
     int tdCode = sk["code"] | -1;
     if (tdCode != 200 || sk["result"].isNull())
@@ -1228,12 +1472,24 @@ String scrollText[7];
 String strTDDate[5];
 
 // 天气信息写到屏幕上
-void weaterData(String *cityDZ, String *dataSK, String *dataFC)
+bool weatherData(const String &cityDZ, const String &dataSK, const String &dataFC)
 {
-  // 解析第一段JSON
-  DynamicJsonDocument doc(1024);
-  deserializeJson(doc, *dataSK);
-  JsonObject sk = doc.as<JsonObject>();
+  // Parse every section before drawing, so a partial upstream response cannot
+  // replace a previously valid screen with empty/zero fields.
+  DynamicJsonDocument liveDoc(1536);
+  DynamicJsonDocument cityDoc(1024);
+  DynamicJsonDocument forecastDoc(512);
+  if (deserializeJson(liveDoc, dataSK) || deserializeJson(cityDoc, cityDZ) ||
+      deserializeJson(forecastDoc, dataFC))
+    return false;
+
+  JsonObject sk = liveDoc.as<JsonObject>();
+  JsonObject dz = cityDoc.as<JsonObject>();
+  JsonObject fc = forecastDoc.as<JsonObject>();
+  if (!sk.containsKey("temp") || !sk.containsKey("SD") ||
+      !sk.containsKey("cityname") || !sk.containsKey("weathercode") ||
+      !dz.containsKey("weather") || !fc.containsKey("fd") || !fc.containsKey("fc"))
+    return false;
 
   // TFT_eSprite clkb = TFT_eSprite(&tft);
 
@@ -1249,8 +1505,8 @@ void weaterData(String *cityDZ, String *dataSK, String *dataFC)
   clk.drawString(sk["temp"].as<String>() + "℃", 28, 13);
   clk.pushSprite(100, 184);
   clk.deleteSprite();
-  tempnum = sk["temp"].as<int>();
-  tempnum = tempnum + 10;
+  const int temperatureCelsius = sk["temp"].as<int>();
+  tempnum = sdd::temperatureBarWidth(temperatureCelsius);
   if (tempnum < 10)
     tempcol = 0x00FF;
   else if (tempnum < 28)
@@ -1278,7 +1534,8 @@ void weaterData(String *cityDZ, String *dataSK, String *dataFC)
   clk.pushSprite(100, 214);
   clk.deleteSprite();
   // String A = sk["SD"].as<String>();
-  huminum = atoi((sk["SD"].as<String>()).substring(0, 2).c_str());
+  huminum = sk["SD"].as<String>().toInt();
+  huminum = constrain(huminum, 0, 100);
 
   if (huminum > 90)
     humicol = 0x00FF;
@@ -1302,41 +1559,27 @@ void weaterData(String *cityDZ, String *dataSK, String *dataFC)
   clk.deleteSprite();
 
   // PM2.5空气指数
-  uint16_t pm25BgColor = tft.color565(156, 202, 127); // 优
-  String aqiTxt = "优";
-  int pm25V = sk["aqi"];
-  bool hasValidAqi = pm25V > 0;
-  if (!hasValidAqi)
+  uint16_t pm25BgColor = tft.color565(80, 80, 80);
+  String aqiTxt = "未知";
+  int pm25V = sk["aqi"].isNull() ? -1 : sk["aqi"].as<int>();
+  const sdd::AqiLevel aqiLevel = sdd::classifyAqi(pm25V);
+  const bool hasValidAqi = aqiLevel != sdd::AqiLevel::Unknown;
+  switch (aqiLevel)
   {
-    // 避免递归获取天气导致的栈溢出，缺失时直接显示占位
-    mySerialPrintln("AQI missing in response, using placeholder");
-    pm25BgColor = tft.color565(80, 80, 80);
-    aqiTxt = "未知";
-  }
-  else if (pm25V > 200)
-  {
-    pm25BgColor = tft.color565(136, 11, 32); // 重度
-    aqiTxt = "重度";
-  }
-  else if (pm25V > 75)
-  {
-    pm25BgColor = tft.color565(186, 55, 121); // 中度
-    aqiTxt = "中度";
-  }
-  else if (pm25V > 50)
-  {
-    pm25BgColor = tft.color565(242, 159, 57); // 轻
-    aqiTxt = "轻度";
-  }
-  else if (pm25V > 25)
-  {
-    pm25BgColor = tft.color565(247, 219, 100); // 良
-    aqiTxt = "良";
-  }
-  else
-  {
-    pm25BgColor = tft.color565(156, 202, 127); // 优
-    aqiTxt = "优";
+    case sdd::AqiLevel::Excellent:
+      pm25BgColor = tft.color565(156, 202, 127); aqiTxt = "优"; break;
+    case sdd::AqiLevel::Good:
+      pm25BgColor = tft.color565(247, 219, 100); aqiTxt = "良"; break;
+    case sdd::AqiLevel::Light:
+      pm25BgColor = tft.color565(242, 159, 57); aqiTxt = "轻度"; break;
+    case sdd::AqiLevel::Moderate:
+      pm25BgColor = tft.color565(186, 55, 121); aqiTxt = "中度"; break;
+    case sdd::AqiLevel::Heavy:
+      pm25BgColor = tft.color565(136, 11, 32); aqiTxt = "重度"; break;
+    case sdd::AqiLevel::Severe:
+      pm25BgColor = tft.color565(88, 6, 20); aqiTxt = "严重"; break;
+    case sdd::AqiLevel::Unknown:
+      mySerialPrintln("AQI missing in response, using placeholder"); break;
   }
   if (hasValidAqi)
   {
@@ -1358,12 +1601,13 @@ void weaterData(String *cityDZ, String *dataSK, String *dataFC)
   // scrollText[6] = atoi((sk["weathercode"].as<String>()).substring(1,3).c_str()) ;
 
   // 天气图标
-  wrat.printfweather(170, 15, atoi((sk["weathercode"].as<String>()).substring(1, 3).c_str()));
+  String weatherCode = sk["weathercode"].as<String>();
+  if (weatherCode.length() > 0 && !isDigit(weatherCode[0]))
+    weatherCode.remove(0, 1);
+  wrat.draw(170, 15, weatherCode.toInt());
 
   // 左上角滚动字幕
   // 解析第二段JSON
-  deserializeJson(doc, *cityDZ);
-  JsonObject dz = doc.as<JsonObject>();
   // mySerialPrintln(sk["ws"].as<String>());
   // 横向滚动方式
   // String aa = "今日天气:" + dz["weather"].as<String>() + "，温度:最低" + dz["tempn"].as<String>() + "，最高" + dz["temp"].as<String>() + " 空气质量:" + aqiTxt + "，风向:" + dz["wd"].as<String>() + dz["ws"].as<String>();
@@ -1371,15 +1615,13 @@ void weaterData(String *cityDZ, String *dataSK, String *dataFC)
   // mySerialPrintln(aa);
   scrollText[3] = "今日" + dz["weather"].as<String>();
 
-  deserializeJson(doc, *dataFC);
-  JsonObject fc = doc.as<JsonObject>();
-
   scrollText[4] = "最低温度" + fc["fd"].as<String>() + "℃";
   scrollText[5] = "最高温度" + fc["fc"].as<String>() + "℃";
 
   // mySerialPrintln(scrollText[0]);
 
   clk.unloadFont();
+  return true;
 }
 
 int currentIndex = 0;
@@ -1463,35 +1705,6 @@ void digitalClockDisplay(int reflash_en = 0)
   int now_minute = minute(); // 获取分钟
   int now_second = second(); // 获取秒针
 
-  // 非阻塞 NTP 重试：如果当前时间未设置（00:00），定时触发 NTP 请求以避免界面阻塞
-  static unsigned long ntp_last_attempt = 0;
-  static uint8_t ntp_attempts = 0;
-  const unsigned long NTP_RETRY_INTERVAL_MS = 5000; // 每次重试间隔 5s
-  const uint8_t NTP_RETRY_MAX = 6;                 // 最多重试 6 次
-
-  if (now_hour == 0 && now_minute == 0) {
-    // 如果还没开始重试，立即发起一次
-    if (ntp_attempts == 0 && (millis() - ntp_last_attempt > 0)) {
-      ntp_last_attempt = millis();
-      ntp_attempts = 1;
-      getNtpTime();
-    }
-    // 根据间隔触发后续重试
-    else if (ntp_attempts > 0 && ntp_attempts < NTP_RETRY_MAX && (millis() - ntp_last_attempt >= NTP_RETRY_INTERVAL_MS)) {
-      ntp_last_attempt = millis();
-      ntp_attempts++;
-      getNtpTime();
-    }
-    // 如果时间被设置，则重置计数
-    now_hour = hour();     // 获取小时
-    now_minute = minute(); // 获取分钟
-    now_second = second(); // 获取秒针
-    if (now_hour != 0 || now_minute != 0) {
-      ntp_attempts = 0;
-      ntp_last_attempt = 0;
-    }
-  }
-
   // 小时刷新
   if ((now_hour != Hour_sign) || (reflash_en == 1))
   {
@@ -1499,10 +1712,7 @@ void digitalClockDisplay(int reflash_en = 0)
     drawLineFont(60, timeY, now_hour % 10, 3, SD_FONT_WHITE);
     Hour_sign = now_hour;
     if (Wifi_en == 1 && WiFi.status() == WL_CONNECTED)
-    {
       getTD();
-      getCityWeater();
-    }
   }
   // 分钟刷新
   if ((now_minute != Minute_sign) || (reflash_en == 1))
@@ -1523,11 +1733,11 @@ void digitalClockDisplay(int reflash_en = 0)
   if (reflash_en == 1)
     reflash_en = 0;
   /***日期****/
-  strTDDate[0] = "公历 " + String(TD_gregoriandate_year) + "年";
-  strTDDate[1] = String(monthDay()) + " " + String(week());
-  strTDDate[2] = "农历 " + String(TD_lunardate_year) + "年 " + TD_animal;
-  strTDDate[3] = TD_lubarmonth + " " + TD_lunarday + " " + TD_jieqi;
-  strTDDate[4] = TD_year + " " + TD_month + " " + TD_day;
+  strTDDate[0] = timeStatus() == timeSet ? "公历 " + String(year()) + "年" : "时间尚未同步";
+  strTDDate[1] = timeStatus() == timeSet ? String(monthDay()) + " " + String(week()) : "等待网络同步";
+  strTDDate[2] = TD_lunardate_year.length() ? "农历 " + TD_lunardate_year + "年 " + TD_animal : "农历未配置";
+  strTDDate[3] = TD_lubarmonth.length() ? TD_lubarmonth + " " + TD_lunarday + " " + TD_jieqi : "";
+  strTDDate[4] = TD_year.length() ? TD_year + " " + TD_month + " " + TD_day : "";
   /***日期****/
 }
 
@@ -1561,199 +1771,98 @@ void TDBanner()
 
 const int NTP_PACKET_SIZE = 48;     // NTP时间在消息的前48字节中
 byte packetBuffer[NTP_PACKET_SIZE]; // buffer to hold incoming & outgoing packets
-
-// 辅助：打印并解析域名
-bool debug_resolve(const char* host, IPAddress &ip)
-{
-    mySerialPrint("Resolve host: ");
-    mySerialPrintln(host);
-    mySerialPrint("Local IP: ");
-    mySerialPrintln(WiFi.localIP().toString());
-    mySerialPrint("Gateway: ");
-    mySerialPrintln(WiFi.gatewayIP().toString());
-    mySerialPrint("DNS: ");
-    mySerialPrint(WiFi.dnsIP(0).toString());
-    mySerialPrint(" ");
-    mySerialPrintln(WiFi.dnsIP(1).toString());
-    bool ok = WiFi.hostByName(host, ip);
-    if (ok) {
-      mySerialPrint("Resolved: ");
-      mySerialPrintln(ip.toString());
-    } else {
-      mySerialPrintln("Resolve FAILED");
-    }
-    return ok;
-}
+uint32_t ntpRequestCookie = 0;
 
 time_t getNtpTime()
 {
-  IPAddress ntpServerIP; // NTP server's ip address
-
-  mySerialPrintln("getNtpTime start");
-
-  // Ensure WiFi is up
-  if (WiFi.status() != WL_CONNECTED) {
-    mySerialPrintln("WiFi not connected, waking and reconnecting...");
-    WiFi.forceSleepWake();
-    WiFi.begin(wificonf.stassid, wificonf.stapsw);
-    unsigned long start = millis();
-    while (WiFi.status() != WL_CONNECTED && millis() - start < 8000) {
-      delay(200);
-    }
-    if (WiFi.status() != WL_CONNECTED) {
-      mySerialPrintln("WiFi still not connected, aborting NTP");
-      return 0;
-    }
-    mySerialPrint("Reconnected, IP:");
-    mySerialPrintln(WiFi.localIP());
-  }
-
-  // print DNS / network info
-  mySerialPrint("Network info: IP=");
-  mySerialPrint(WiFi.localIP().toString());
-  mySerialPrint(" GW=");
-  mySerialPrint(WiFi.gatewayIP().toString());
-  mySerialPrint(" DNS0=");
-  mySerialPrint(WiFi.dnsIP(0).toString());
-  mySerialPrint(" DNS1=");
-  mySerialPrintln(WiFi.dnsIP(1).toString());
-
-  // If DNS not provided by DHCP, set fallback DNS servers (keep current IP/gateway/subnet)
-  if (WiFi.dnsIP(0) == IPAddress(0,0,0,0)) {
-    mySerialPrintln("DNS unset: applying fallback DNS servers");
-    IPAddress local = WiFi.localIP();
-    IPAddress gw = WiFi.gatewayIP();
-    IPAddress sn = WiFi.subnetMask();
-    IPAddress dns1(223,5,5,5);   // AliDNS
-    IPAddress dns2(8,8,8,8);     // Google DNS
-    // Note: WiFi.config with same local IP preserves current address but switches to static config
-    if (WiFi.config(local, gw, sn, dns1, dns2)) {
-      mySerialPrint("Fallback DNS applied: ");
-      mySerialPrint(WiFi.dnsIP(0).toString());
-      mySerialPrint(" ");
-      mySerialPrintln(WiFi.dnsIP(1).toString());
-    } else {
-      mySerialPrintln("WiFi.config failed to set DNS");
-    }
-  }
-
-  // Re-bind UDP in case WiFi was slept/woken
-  Udp.begin(localPort);
-  mySerialPrint("UDP bound to port: ");
-  mySerialPrintln(localPort);
-
-  while (Udp.parsePacket() > 0)
-    ; // discard any previously received packets
-
-  // Try DNS resolution first
-  bool resolved = WiFi.hostByName(ntpServerName, ntpServerIP);
-  if (!resolved) {
-    mySerialPrintln("DNS lookup failed for NTP server");
-    // fallback to a known NTP IP
-    ntpServerIP = IPAddress(129, 6, 15, 28); // time.nist.gov fallback
-    mySerialPrint("Using fallback NTP IP: ");
-    mySerialPrintln(ntpServerIP.toString());
-  } else {
-    mySerialPrint("NTP server IP: ");
-    mySerialPrintln(ntpServerIP.toString());
-  }
-
-  const uint8_t maxAttempts = 3;
-  for (uint8_t attempt = 1; attempt <= maxAttempts; ++attempt) {
-    mySerialPrint("NTP attempt ");
-    mySerialPrint(attempt);
-    mySerialPrint(" send at ");
-    mySerialPrintln(String(millis()));
-
-    sendNTPpacket(ntpServerIP);
-
-    uint32_t beginWait = millis();
-    while (millis() - beginWait < 3000) // wait up to 3s per attempt
+  const bool restoreSleep = Wifi_en == 0;
+  auto finish = [restoreSleep](time_t result) -> time_t {
+    if (restoreSleep)
     {
-      int size = Udp.parsePacket();
-      if (size >= NTP_PACKET_SIZE)
-      {
-        mySerialPrintln("Receive NTP Response");
-        Udp.read(packetBuffer, NTP_PACKET_SIZE); // read packet into the buffer
-
-        unsigned long secsSince1900 = ((unsigned long)packetBuffer[40] << 24) |
-                                      ((unsigned long)packetBuffer[41] << 16) |
-                                      ((unsigned long)packetBuffer[42] << 8) |
-                                      ((unsigned long)packetBuffer[43]);
-
-        // 转换为 Unix epoch 并应用时区偏移
-        time_t epoch = secsSince1900 - 2208988800UL + timeZone * SECS_PER_HOUR;
-
-        // 使用 TimeLib 将 epoch 拆分为年/月/日/时/分/秒 并打印
-        tmElements_t tm;
-        breakTime(epoch, tm);
-        char buf[32];
-        sprintf(buf, "%04d-%02d-%02d %02d:%02d:%02d",
-                tmYearToCalendar(tm.Year), tm.Month, tm.Day,
-                tm.Hour, tm.Minute, tm.Second);
-        mySerialPrint("NTP time: ");
-        mySerialPrintln(buf);
-
-        // 将时间写入 TimeLib，确保系统时间立即生效（用于界面刷新）
-        setTime(tm.Hour, tm.Minute, tm.Second, tm.Day, tm.Month, tmYearToCalendar(tm.Year));
-
-        return epoch;
-      }
-      delay(50);
+      Udp.stop();
+      WiFi.forceSleepBegin();
+      delay(1);
     }
-    mySerialPrint("No NTP Response for attempt ");
-    mySerialPrintln(attempt);
-    // 如果 DNS 解析失败且使用了 fallback IP，可再尝试一次 DNS
-    if (!resolved && attempt == 1) {
-      mySerialPrintln("Retry DNS resolution for NTP server");
-      if (WiFi.hostByName(ntpServerName, ntpServerIP)) {
-        mySerialPrint("Resolved on retry: ");
-        mySerialPrintln(ntpServerIP.toString());
-        resolved = true;
-      } else {
-        mySerialPrintln("DNS still failed");
-      }
-    }
-  }
+    return result;
+  };
 
-  mySerialPrintln("No NTP Response :-( Timeout overall");
-  // NTP failed — 尝试 HTTP 时间回退（worldtimeapi）
-  mySerialPrintln("Attempting HTTP time fallback (worldtimeapi.org)");
-  HTTPClient http;
-  String url = "http://worldtimeapi.org/api/ip";
-  http.begin(wificlient, url);
-  int httpCode = http.GET();
-  if (httpCode == HTTP_CODE_OK)
+  if (WiFi.status() != WL_CONNECTED)
   {
-    String payload = http.getString();
-    DynamicJsonDocument doc(1024);
-    DeserializationError err = deserializeJson(doc, payload);
-    if (!err)
+    WiFi.forceSleepWake();
+    delay(1);
+    WiFi.mode(WIFI_STA);
+    if (strlen(wificonf.stassid))
+      WiFi.begin(wificonf.stassid, wificonf.stapsw);
+    else
+      WiFi.begin();
+    const unsigned long connectStarted = millis();
+    while (WiFi.status() != WL_CONNECTED &&
+           millis() - connectStarted < WIFI_CONNECT_TIMEOUT_MS)
+      delay(100);
+    if (WiFi.status() != WL_CONNECTED)
     {
-      if (doc.containsKey("unixtime"))
-      {
-        unsigned long unixt = doc["unixtime"].as<unsigned long>();
-        if (unixt > 1000000000UL)
-        {
-          time_t epoch = (time_t)unixt + timeZone * SECS_PER_HOUR;
-          tmElements_t tm;
-          breakTime(epoch, tm);
-          setTime(tm.Hour, tm.Minute, tm.Second, tm.Day, tm.Month, tmYearToCalendar(tm.Year));
-          char buf[32];
-          sprintf(buf, "%04d-%02d-%02d %02d:%02d:%02d",
-                  tmYearToCalendar(tm.Year), tm.Month, tm.Day,
-                  tm.Hour, tm.Minute, tm.Second);
-          mySerialPrint("HTTP time: ");
-          mySerialPrintln(buf);
-          http.end();
-          return epoch;
-        }
-      }
+      mySerialPrintln("NTP aborted: WiFi timeout");
+      return finish(0);
     }
   }
-  http.end();
 
-  return 0; // failed to get time
+  IPAddress ntpServerIP;
+  bool resolved = false;
+  for (size_t i = 0; i < sizeof(ntpServerNames) / sizeof(ntpServerNames[0]); i++)
+  {
+    if (WiFi.hostByName(ntpServerNames[i], ntpServerIP))
+    {
+      resolved = true;
+      break;
+    }
+  }
+  if (!resolved)
+  {
+    mySerialPrintln("NTP aborted: all DNS lookups failed");
+    return finish(0);
+  }
+
+  Udp.begin(localPort);
+  while (Udp.parsePacket() > 0) {}
+
+  const uint8_t maxAttempts = 2;
+  for (uint8_t attempt = 1; attempt <= maxAttempts; ++attempt)
+  {
+    sendNTPpacket(ntpServerIP);
+    const uint32_t beginWait = millis();
+    while (millis() - beginWait < 2000UL)
+    {
+      const int size = Udp.parsePacket();
+      if (size >= NTP_PACKET_SIZE && Udp.remoteIP() == ntpServerIP && Udp.remotePort() == 123)
+      {
+        Udp.read(packetBuffer, NTP_PACKET_SIZE);
+        const uint8_t leap = packetBuffer[0] >> 6;
+        const uint8_t mode = packetBuffer[0] & 0x07;
+        const uint8_t stratum = packetBuffer[1];
+        const uint32_t originCookie = (static_cast<uint32_t>(packetBuffer[24]) << 24) |
+                                      (static_cast<uint32_t>(packetBuffer[25]) << 16) |
+                                      (static_cast<uint32_t>(packetBuffer[26]) << 8) |
+                                      static_cast<uint32_t>(packetBuffer[27]);
+        const uint32_t secsSince1900 = (static_cast<uint32_t>(packetBuffer[40]) << 24) |
+                                       (static_cast<uint32_t>(packetBuffer[41]) << 16) |
+                                       (static_cast<uint32_t>(packetBuffer[42]) << 8) |
+                                       static_cast<uint32_t>(packetBuffer[43]);
+        if (leap != 3 && mode == 4 && stratum >= 1 && stratum <= 15 &&
+            originCookie == ntpRequestCookie && secsSince1900 >= 3786825600UL)
+        {
+          const time_t epoch = secsSince1900 - 2208988800UL + timeZone * SECS_PER_HOUR;
+          setTime(epoch);
+          mySerialPrintln("NTP synchronization succeeded");
+          return finish(epoch);
+        }
+        mySerialPrintln("Rejected invalid NTP response");
+      }
+      delay(20);
+    }
+  }
+
+  mySerialPrintln("NTP synchronization timed out");
+  return finish(0);
 }
 
 // 向NTP服务器发送请求
@@ -1763,7 +1872,7 @@ void sendNTPpacket(IPAddress &address)
   memset(packetBuffer, 0, NTP_PACKET_SIZE);
   // Initialize values needed to form NTP request
   // (see URL above for details on the packets)
-  packetBuffer[0] = 0b11100011; // LI, Version, Mode
+  packetBuffer[0] = 0x23;       // LI=0, NTPv4, client mode
   packetBuffer[1] = 0;          // Stratum, or type of clock
   packetBuffer[2] = 6;          // Polling Interval
   packetBuffer[3] = 0xEC;       // Peer Clock Precision
@@ -1772,6 +1881,15 @@ void sendNTPpacket(IPAddress &address)
   packetBuffer[13] = 0x4E;
   packetBuffer[14] = 49;
   packetBuffer[15] = 52;
+  ntpRequestCookie = ESP.getCycleCount() ^ micros();
+  packetBuffer[40] = ntpRequestCookie >> 24;
+  packetBuffer[41] = ntpRequestCookie >> 16;
+  packetBuffer[42] = ntpRequestCookie >> 8;
+  packetBuffer[43] = ntpRequestCookie;
+  packetBuffer[44] = ~packetBuffer[40];
+  packetBuffer[45] = ~packetBuffer[41];
+  packetBuffer[46] = ~packetBuffer[42];
+  packetBuffer[47] = ~packetBuffer[43];
   // all NTP fields have been given values, now
   // you can send a packet requesting a timestamp:
   Udp.beginPacket(address, 123); // NTP requests are to port 123
@@ -1779,14 +1897,34 @@ void sendNTPpacket(IPAddress &address)
   Udp.endPacket();
 }
 
-void esp_reset(Button2 &btn)
+void cycle_brightness(Button2 &btn)
 {
-  ESP.reset();
+  (void)btn;
+  static const uint8_t levels[] = {25, 50, 75, 100};
+  uint8_t next = levels[0];
+  for (size_t i = 0; i < sizeof(levels) / sizeof(levels[0]); i++)
+  {
+    if (LCD_BL_PWM < levels[i])
+    {
+      next = levels[i];
+      break;
+    }
+  }
+  applyBacklight(next);
+  EEPROM.write(BL_addr, next);
+  EEPROM.commit();
+  mySerialPrint("Brightness: ");
+  mySerialPrintln(next);
 }
 
 void wifi_reset(Button2 &btn)
 {
+  (void)btn;
+#if WM_EN
   wm.resetSettings();
+#else
+  WiFi.disconnect(true);
+#endif
   deletewificonfig();
   delay(10);
   mySerialPrintln("Reset WiFi successfully");
@@ -1796,8 +1934,6 @@ void wifi_reset(Button2 &btn)
 // 更新时间
 void reflashTime()
 {
-  prevDisplay = now();
-  // timeClockDisplay(1);
   digitalClockDisplay();
   prevTime = 0;
 }
@@ -1821,23 +1957,15 @@ void WIFI_reflash_All()
     if (WiFi.status() == WL_CONNECTED)
     {
       mySerialPrintln("WIFI connected");
-
-      // mySerialPrintln("getCityWeater start");
-      getCityWeater();
-      getTD();
-      // mySerialPrintln("getCityWeater end");
-
       getNtpTime();
-      // 其他需要联网的方法写在后面
-
-      // WiFi.forceSleepBegin(); // Wifi Off
-      // mySerialPrintln("WIFI sleep......");
-      // Wifi_en = 0;
+      getCityWeather();
+      getTD();
       closeWifi();
     }
-    else
+    else if (wifiWakeStartedAt != 0 && millis() - wifiWakeStartedAt >= WIFI_CONNECT_TIMEOUT_MS)
     {
-      // mySerialPrintln("WIFI unconnected");
+      mySerialPrintln("WIFI reconnect timed out; keeping cached display");
+      closeWifi();
     }
   }
 }
@@ -1847,23 +1975,25 @@ void openWifi()
 {
   mySerialPrintln("WIFI reset......");
   WiFi.forceSleepWake(); // wifi on
+  delay(1);
+  WiFi.mode(WIFI_STA);
+  if (strlen(wificonf.stassid))
+    WiFi.begin(wificonf.stassid, wificonf.stapsw);
+  else
+    WiFi.begin();
+  wifiWakeStartedAt = millis();
   Wifi_en = 1;
   WIFI_reflash_All();
 }
 
 void closeWifi()
 {
+  Udp.stop();
   WiFi.forceSleepBegin(); // Wifi Off
+  delay(1);
   mySerialPrintln("WIFI sleep......");
   Wifi_en = 0;
-}
-
-// 强制屏幕刷新
-void LCD_reflash()
-{
-  reflashTime();
-  reflashBanner();
-  openWifi();
+  wifiWakeStartedAt = 0;
 }
 
 // 守护线程池
@@ -1878,7 +2008,7 @@ void Supervisor_controller()
 
 void setup()
 {
-  Button_sw1.setClickHandler(esp_reset);
+  Button_sw1.setClickHandler(cycle_brightness);
   Button_sw1.setLongClickHandler(wifi_reset);
   Serial.begin(115200);
   EEPROM.begin(1024);
@@ -1887,18 +2017,20 @@ void setup()
 #if DHT_EN
   dht.begin();
   // 从eeprom读取DHT传感器使能标志
-  DHT_img_flag = EEPROM.read(DHT_addr);
+  DHT_img_flag = EEPROM.read(DHT_addr) == 1 ? 1 : 0;
 #endif
   readTDKeyfromEEP();
   // 从eeprom读取背光亮度设置
-  if (EEPROM.read(BL_addr) > 0 && EEPROM.read(BL_addr) < 100)
+  if (sdd::isValidBrightness(EEPROM.read(BL_addr)))
     LCD_BL_PWM = EEPROM.read(BL_addr);
   // 从eeprom读取屏幕方向设置
-  if (EEPROM.read(Ro_addr) >= 0 && EEPROM.read(Ro_addr) <= 3)
+  if (sdd::isValidRotation(EEPROM.read(Ro_addr)))
     LCD_Rotation = EEPROM.read(Ro_addr);
+  if (sdd::isValidWeatherInterval(EEPROM.read(WeatherInterval_addr)))
+    weatherUpdateIntervalMinutes = EEPROM.read(WeatherInterval_addr);
 
   pinMode(LCD_BL_PIN, OUTPUT);
-  analogWrite(LCD_BL_PIN, 1023 - (LCD_BL_PWM * 10));
+  applyBacklight(LCD_BL_PWM);
 
   tft.begin();          /* TFT init */
   tft.invertDisplay(1); // 反转所有显示颜色：1反转，0正常
@@ -1906,7 +2038,6 @@ void setup()
   tft.fillScreen(0x0000);
   tft.setTextColor(TFT_BLACK, bgColor);
 
-  targetTime = millis() + 1000;
   readwificonfig(); // 读取存储的wifi信息
   mySerialPrint("Connecting to WIFI");
   mySerialPrintln(wificonf.stassid);
@@ -1934,24 +2065,6 @@ void setup()
             break;
     }
   }
-  // If DNS not provided by DHCP, set fallback DNS servers (keep current IP/gateway/subnet)
-  if (WiFi.dnsIP(0) == IPAddress(0,0,0,0)) {
-    mySerialPrintln("DNS unset: applying fallback DNS servers");
-    IPAddress local = WiFi.localIP();
-    IPAddress gw = WiFi.gatewayIP();
-    IPAddress sn = WiFi.subnetMask();
-    IPAddress dns1(223,5,5,5);   // AliDNS
-    IPAddress dns2(8,8,8,8);     // Google DNS
-    // Note: WiFi.config with same local IP preserves current address but switches to static config
-    if (WiFi.config(local, gw, sn, dns1, dns2)) {
-      mySerialPrint("Fallback DNS applied: ");
-      mySerialPrint(WiFi.dnsIP(0).toString());
-      mySerialPrint(" ");
-      mySerialPrintln(WiFi.dnsIP(1).toString());
-    } else {
-      mySerialPrintln("WiFi.config failed to set DNS");
-    }
-  }
   delay(10);
   while (loadNum < 194) // 让动画走完
   {
@@ -1962,10 +2075,8 @@ void setup()
   {
     mySerialPrint("SSID:");
     mySerialPrintln(WiFi.SSID().c_str());
-    mySerialPrint("PSW:");
-    mySerialPrintln(WiFi.psk().c_str());
-    strcpy(wificonf.stassid, WiFi.SSID().c_str()); // 名称复制
-    strcpy(wificonf.stapsw, WiFi.psk().c_str());   // 密码复制
+    strlcpy(wificonf.stassid, WiFi.SSID().c_str(), sizeof(wificonf.stassid));
+    strlcpy(wificonf.stapsw, WiFi.psk().c_str(), sizeof(wificonf.stapsw));
     savewificonfig();
     readwificonfig();
   }
@@ -1974,9 +2085,8 @@ void setup()
   mySerialPrintln(WiFi.localIP());
   mySerialPrintln("Starting UDP");
   Udp.begin(localPort);
-  mySerialPrintln("Waiting for synchronization...");
-  setSyncProvider(getNtpTime);
-  setSyncInterval(300);
+  mySerialPrintln("Synchronizing time...");
+  getNtpTime();
 
   TJpgDec.setJpgScale(1);
   TJpgDec.setSwapBytes(true);
@@ -1989,7 +2099,7 @@ void setup()
     CityCODE += EEPROM.read(CC_addr + cnum - 1);
     delay(5);
   }
-  if (CityCODE >= 101000000 && CityCODE <= 102000000)
+  if (sdd::isValidCityCode(CityCODE) && CityCODE != 0)
     cityCode = CityCODE;
   else
     getCityCode(); // 获取城市代码
@@ -1999,7 +2109,7 @@ void setup()
   TJpgDec.drawJpg(15, 183, temperature, sizeof(temperature)); // 温度图标
   TJpgDec.drawJpg(15, 213, humidity, sizeof(humidity));       // 湿度图标
 
-  getCityWeater();
+  getCityWeather();
 #if DHT_EN
   if (DHT_img_flag != 0)
     IndoorTem();
