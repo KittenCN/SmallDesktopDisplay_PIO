@@ -1,6 +1,6 @@
 # SmallDesktopDisplay
 
-基于 ESP8266 NodeMCU 与 240 × 240 ST7789 彩屏的桌面天气时钟固件。当前版本为 **SDD 1.5.0**，使用 Arduino 框架和 PlatformIO 构建。
+基于 ESP8266 NodeMCU 与 240 × 240 ST7789 彩屏的桌面天气时钟固件。当前版本为 **SDD 1.5.1**，使用 Arduino 框架和 PlatformIO 构建。
 
 本项目最初基于 [chuxin520922/SmallDesktopDisplay](https://github.com/chuxin520922/SmallDesktopDisplay) 修改，并保留了原作者及历次贡献者署名。
 
@@ -9,13 +9,14 @@
 - 24 小时时钟、分钟与秒钟显示；NTP 成功后显示公历日期和星期。
 - 自动或手动城市代码，显示实时天气、温度、湿度、风向风力、当日高低温和天气图标。
 - 按中国 AQI 指数的六级边界显示空气质量；AQI 缺失时明确显示“未知”。
-- 可选 TianAPI 农历数据：农历年月日、天干地支、生肖和节气。
+- 可选 TianAPI 农历数据：农历年月日、天干地支、生肖和节气；轮播会自动跳过空页，失败响应不会覆盖上一份完整数据。
 - 右下角 JPEG 帧动画，内置太空人、胡桃和初音未来三套资源，也可完全关闭。
 - 可选 DHT11 室内温湿度显示；读数无效时保留上一帧而不绘制 `NaN`。
 - WiFiManager Web 配网，连接失败时开启限时配置门户；也可编译为 SmartConfig 模式。
 - 配置持久化：亮度、旋转、天气间隔、城市、DHT 开关、Wi-Fi 凭据和 TianAPI key。
-- 串口配置与诊断：状态、空闲堆、亮度、城市、方向、刷新周期、立即刷新与重启。
+- 串口配置与诊断：状态、空闲堆、最大连续堆块、碎片率、亮度、城市、方向、刷新周期、立即刷新与重启。
 - 网络请求结束后关闭 Wi-Fi 射频；重连、HTTP 和 NTP 均有明确超时。
+- 天气与日期横幅按实际字体宽度分段横移；上游返回字库未覆盖字符时显示 `-`，不会静默吞字或裁掉整段尾部。
 
 ## 硬件与接线
 
@@ -39,7 +40,7 @@
 1. 固件先读取经过边界校验的 EEPROM 配置。Wi-Fi 数据使用版本号和 CRC16 检查；旧版 32 + 64 字节布局仍可读取，并在下次成功连接后迁移。
 2. 设备尝试连接已保存的网络。默认 Web 配网模式下，失败后开启 `SmallDisplay-<芯片ID>` 配置热点。
 3. 配置门户最多开放 180 秒，可设置城市代码、亮度、天气刷新间隔、屏幕方向和可选 DHT11。
-4. 联网后依次同步 NTP、天气和可选农历数据，随后关闭 Wi-Fi；默认每 10 分钟唤醒更新一次。
+4. 联网后依次同步 NTP、天气和可选农历数据，首次启动也会在 Wi-Fi 休眠前获取农历；默认每 10 分钟唤醒更新一次。
 5. 城市代码填 `0` 时通过 IP 自动识别；也可填写 `101xxxxxx` 格式的 9 位 weather.com.cn 城市代码。
 
 配置门户超时或上游不可用时，设备继续以离线界面运行，不会无限卡在主循环中。
@@ -48,7 +49,7 @@
 
 - 时间：`ntp.aliyun.com`、`ntp.tencent.com`、`pool.ntp.org`。固件验证响应来源、NTP 模式、stratum、时间范围和请求 cookie，不再接受明文 HTTP 时间降级。
 - 天气与城市：weather.com.cn 的 HTTP 接口。该接口不提供 TLS，因此天气数据没有传输完整性保证；失败或格式变化时保留已有画面。
-- 农历：`apis.tianapi.com`。需要 32 字符 API key，并在 `src/config.h` 设置当前证书 SHA-1 指纹 `TIANAPI_TLS_FINGERPRINT`。指纹为空或不匹配时功能保持关闭，固件不会退回不安全 TLS。
+- 农历：`apis.tianapi.com`。需要 32 字符 API key，并在 `src/config.h` 设置当前证书 SHA-1 指纹 `TIANAPI_TLS_FINGERPRINT`。指纹为空或不匹配时功能保持关闭，固件不会退回不安全 TLS。响应会先完成字段、类型和日期校验，再原子替换显示快照；节气允许为空。
 - Wi-Fi 密码和 API key 存储于 ESP8266 EEPROM 模拟区，未做静态加密；具备芯片物理访问能力的人员仍可能读取。串口日志不会输出这些秘密。
 - 配网热点当前不设密码，但使用设备唯一 SSID 且仅在连接失败时限时开放。请在可信环境中完成首次配置。
 
@@ -68,7 +69,7 @@ pio device monitor -b 115200
 - `.pio/build/esp12e/firmware.elf`：符号和调试信息；
 - `.pio/build/esp12e/firmware.hex`：由 `extra_script.py` 额外生成，供需要 Intel HEX 的烧录流程使用。
 
-当前默认构建约占 57% RAM、94% 应用分区 Flash。新增图片或字体前必须重新检查容量，避免超过 100%。
+当前默认构建约占 58% RAM、94% 应用分区 Flash。新增图片或字体前必须重新检查容量，避免超过 100%。
 
 ## 编译选项
 
@@ -107,6 +108,12 @@ pio device monitor -b 115200
 
 ```powershell
 python -B -m unittest discover -s tools/font_translate/tests -v
+```
+
+安装了本机 C++ 编译器时，可实际执行不依赖硬件的显示逻辑断言：
+
+```powershell
+pio test -e native_test
 ```
 
 在没有连接开发板时，编译 Unity 测试固件但不上传、不等待串口：

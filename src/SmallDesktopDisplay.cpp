@@ -9,7 +9,7 @@
  * 三次  修改: 猫道
  * 讨  论  群：811058758、887171863、720661626
  * 创 建 日 期：2021.07.19
- * 最后更改日期：2025.2.12
+ * 最后更改日期：2026.8.3
  *
  *
  * 引 脚 分 配：SCK   GPIO14
@@ -47,7 +47,7 @@
 #include "font/font_td_20.h"         //字体库
 #include "core/DisplayLogic.h"       //纯逻辑与边界校验
 
-#define Version "SDD V1.5.0"
+#define Version "SDD V1.5.1"
 /* *****************************************************************
  *  配置使能位
  * *****************************************************************/
@@ -215,12 +215,23 @@ WiFiUDP Udp;
 WiFiClient wificlient;
 unsigned int localPort = 8000;
 unsigned long wifiWakeStartedAt = 0;
+enum class NetworkRefreshStage : uint8_t
+{
+  Idle,
+  WaitingForWifi,
+  SyncTime,
+  Weather,
+  Lunar,
+  Finish,
+};
+NetworkRefreshStage networkRefreshStage = NetworkRefreshStage::Idle;
 
 // 星期
 String week()
 {
-  String wk[7] = {"日", "一", "二", "三", "四", "五", "六"};
-  String s = "周" + wk[weekday() - 1];
+  static const char *const weekNames[] = {"日", "一", "二", "三", "四", "五", "六"};
+  String s = "周";
+  s += weekNames[weekday() - 1];
   return s;
 }
 
@@ -325,7 +336,13 @@ void loading(byte delayTime) // 绘制进度条
 {
   clk.setColorDepth(8);
 
-  clk.createSprite(200, 100); // 创建窗口
+  if (clk.createSprite(200, 100) == nullptr) // 创建窗口
+  {
+    mySerialPrintln("Loading screen skipped: sprite allocation failed");
+    loadNum += 1;
+    delay(delayTime);
+    return;
+  }
   clk.fillSprite(0x0000);     // 填充率
 
   clk.drawRoundRect(0, 0, 200, 16, 8, 0xFFFF);     // 空心圆角矩形
@@ -352,7 +369,11 @@ void humidityWin()
   clk.setColorDepth(8);
 
   uint8_t barWidth = constrain(huminum, 0, 100) / 2; // 0-100 -> 0-50px
-  clk.createSprite(52, 6);                         // 创建窗口
+  if (clk.createSprite(52, 6) == nullptr)          // 创建窗口
+  {
+    mySerialPrintln("Humidity bar skipped: sprite allocation failed");
+    return;
+  }
   clk.fillSprite(0x0000);                          // 填充率
   clk.drawRoundRect(0, 0, 52, 6, 3, 0xFFFF);       // 空心圆角矩形  起始位x,y,长度，宽度，圆弧半径，颜色
   clk.fillRoundRect(1, 1, barWidth, 4, 2, humicol); // 实心圆角矩形
@@ -365,7 +386,11 @@ void tempWin()
 {
   clk.setColorDepth(8);
 
-  clk.createSprite(52, 6);                         // 创建窗口
+  if (clk.createSprite(52, 6) == nullptr)          // 创建窗口
+  {
+    mySerialPrintln("Temperature bar skipped: sprite allocation failed");
+    return;
+  }
   clk.fillSprite(0x0000);                          // 填充率
   clk.drawRoundRect(0, 0, 52, 6, 3, 0xFFFF);       // 空心圆角矩形  起始位x,y,长度，宽度，圆弧半径，颜色
   clk.fillRoundRect(1, 1, constrain(tempnum, 0, 50), 4, 2, tempcol); // 实心圆角矩形
@@ -390,7 +415,12 @@ void IndoorTem()
   clk.loadFont(ZdyLwFont_20);
 
   // 位置
-  clk.createSprite(58, 30);
+  if (clk.createSprite(58, 30) == nullptr)
+  {
+    clk.unloadFont();
+    mySerialPrintln("DHT screen skipped: sprite allocation failed");
+    return;
+  }
   clk.fillSprite(bgColor);
   clk.setTextDatum(CC_DATUM);
   clk.setTextColor(TFT_WHITE, bgColor);
@@ -399,7 +429,12 @@ void IndoorTem()
   clk.deleteSprite();
 
   // 温度
-  clk.createSprite(60, 24);
+  if (clk.createSprite(60, 24) == nullptr)
+  {
+    clk.unloadFont();
+    mySerialPrintln("DHT temperature skipped: sprite allocation failed");
+    return;
+  }
   clk.fillSprite(bgColor);
   clk.setTextDatum(CC_DATUM);
   clk.setTextColor(TFT_WHITE, bgColor);
@@ -410,7 +445,12 @@ void IndoorTem()
   clk.deleteSprite();
 
   // 湿度
-  clk.createSprite(60, 24);
+  if (clk.createSprite(60, 24) == nullptr)
+  {
+    clk.unloadFont();
+    mySerialPrintln("DHT humidity skipped: sprite allocation failed");
+    return;
+  }
   clk.fillSprite(bgColor);
   clk.setTextDatum(CC_DATUM);
   clk.setTextColor(TFT_WHITE, bgColor);
@@ -420,6 +460,7 @@ void IndoorTem()
   // clk.drawString("100%",28,13);
   clk.pushSprite(170, 214);
   clk.deleteSprite();
+  clk.unloadFont();
 }
 #endif
 
@@ -467,6 +508,97 @@ bool parseStrictInt(const String &text, int &value)
   return true;
 }
 
+bool readRequiredJsonScalarText(JsonObjectConst object, const char *field, String &value)
+{
+  JsonVariantConst candidate = object[field];
+  if (candidate.is<const char *>())
+    value = candidate.as<const char *>();
+  else if (candidate.is<int>())
+    value = String(candidate.as<int>());
+  else
+    return false;
+  value.trim();
+  return value.length() > 0;
+}
+
+bool readRequiredJsonString(JsonObjectConst object, const char *field, String &value)
+{
+  JsonVariantConst candidate = object[field];
+  if (!candidate.is<const char *>())
+    return false;
+  value = candidate.as<const char *>();
+  value.trim();
+  return value.length() > 0;
+}
+
+bool readOptionalJsonText(JsonObjectConst object, const char *field, String &value)
+{
+  JsonVariantConst candidate = object[field];
+  if (candidate.isNull())
+  {
+    value = "";
+    return true;
+  }
+  if (!candidate.is<const char *>())
+    return false;
+  value = candidate.as<const char *>();
+  value.trim();
+  return true;
+}
+
+bool parseHumidityText(const String &text, int &humidity)
+{
+  String numeric = text;
+  numeric.trim();
+  if (numeric.endsWith("%"))
+  {
+    numeric.remove(numeric.length() - 1);
+    numeric.trim();
+  }
+  return parseStrictInt(numeric, humidity) && sdd::isValidHumidity(humidity);
+}
+
+bool parseWeatherCodeText(const String &text, int &weatherCode)
+{
+  String numeric = text;
+  numeric.trim();
+  if (numeric.length() > 0 && !isDigit(numeric[0]))
+    numeric.remove(0, 1);
+  if (numeric.length() == 0 || numeric.length() > 3)
+    return false;
+  for (size_t i = 0; i < numeric.length(); i++)
+  {
+    if (!isDigit(numeric[i]))
+      return false;
+  }
+  return parseStrictInt(numeric, weatherCode) && sdd::isValidWeatherCode(weatherCode);
+}
+
+String replaceUnsupportedGlyphs(TFT_eSPI &display, const String &text)
+{
+  String result;
+  result.reserve(text.length());
+  uint16_t index = 0;
+  const uint16_t length = static_cast<uint16_t>(text.length());
+  while (index < length)
+  {
+    const uint16_t start = index;
+    const uint16_t unicode = display.decodeUTF8(
+        reinterpret_cast<uint8_t *>(const_cast<char *>(text.c_str())), &index, length - start);
+    uint16_t glyphIndex = 0;
+    if (unicode == ' ' || display.getUnicodeIndex(unicode, &glyphIndex))
+    {
+      for (uint16_t byteIndex = start; byteIndex < index; byteIndex++)
+        result += text[byteIndex];
+    }
+    else
+    {
+      result += '-';
+    }
+  }
+  return result;
+}
+
 void applyBacklight(int brightness)
 {
   LCD_BL_PWM = constrain(brightness, 0, 100);
@@ -482,6 +614,11 @@ void printDeviceStatus()
   mySerialPrintln(millis());
   mySerialPrint("Free heap: ");
   mySerialPrintln(ESP.getFreeHeap());
+  mySerialPrint("Largest heap block: ");
+  mySerialPrintln(ESP.getMaxFreeBlockSize());
+  mySerialPrint("Heap fragmentation: ");
+  mySerialPrint(ESP.getHeapFragmentation());
+  mySerialPrintln("%");
   mySerialPrint("WiFi: ");
   mySerialPrintln(WiFi.status() == WL_CONNECTED ? "connected" : "disconnected");
   mySerialPrint("City code: ");
@@ -833,7 +970,11 @@ void Web_win()
 {
   clk.setColorDepth(8);
 
-  clk.createSprite(200, 60); // 创建窗口
+  if (clk.createSprite(200, 60) == nullptr) // 创建窗口
+  {
+    mySerialPrintln("WiFi setup screen skipped: sprite allocation failed");
+    return;
+  }
   clk.fillSprite(0x0000);    // 填充率
 
   clk.setTextDatum(CC_DATUM); // 设置文本数据
@@ -1359,9 +1500,47 @@ String TD_jieqi = "";
 // requests within one cycle and applies a bounded backoff after failures.
 unsigned long td_next_attempt_ms = 0;
 uint8_t td_consecutive_failures = 0;
+uint32_t lunarSnapshotRevision = 0;
 const unsigned long TD_SUCCESS_RETRY_MS = 30UL * 60UL * 1000UL;
-const unsigned long TD_FAIL_RETRY_MS = 1000UL;
-const uint8_t TD_FAIL_FAST_RETRY_MAX = 10;
+const unsigned long TD_FAIL_RETRY_BASE_MS = 60UL * 1000UL;
+
+void scheduleTianApiFailure(const char *reason)
+{
+  mySerialPrintln(reason);
+  if (td_consecutive_failures < 255)
+    td_consecutive_failures++;
+
+  // Back off for 1, 2, 4, 8, then 16 minutes. Network refreshes may be less
+  // frequent, but rapid manual refreshes must not hammer the upstream API.
+  const uint8_t failureIndex = td_consecutive_failures > 0 ? td_consecutive_failures - 1 : 0;
+  const uint8_t exponent = failureIndex < 4 ? failureIndex : 4;
+  td_next_attempt_ms = millis() + TD_FAIL_RETRY_BASE_MS * (1UL << exponent);
+}
+
+bool readRequiredTianApiText(JsonObjectConst result, const char *field, String &value)
+{
+  JsonVariantConst candidate = result[field];
+  if (!candidate.is<const char *>())
+    return false;
+  value = candidate.as<const char *>();
+  value.trim();
+  return value.length() > 0;
+}
+
+bool readOptionalTianApiText(JsonObjectConst result, const char *field, String &value)
+{
+  JsonVariantConst candidate = result[field];
+  if (candidate.isNull())
+  {
+    value = "";
+    return true;
+  }
+  if (!candidate.is<const char *>())
+    return false;
+  value = candidate.as<const char *>();
+  value.trim();
+  return true;
+}
 
 String full_zodiac(const String& zodiac){
   for (int i = 0; i < 12; ++i){
@@ -1386,90 +1565,127 @@ void splitDate(const String& date, String& year, String& month, String& day) {
 void getTD()
 {
   if (!isValidTianApiKey(TD_key))
-  {
     return;
-  }
+
   unsigned long nowMs = millis();
   if ((long)(nowMs - td_next_attempt_ms) < 0)
+    return;
+
+  String str = HTTPS_request("apis.tianapi.com", "/lunar/index", "key=" + TD_key);
+  mySerialPrintln("Obtaining Heavenly Stems and Earthly Branches information");
+  if (str == "0" || str.length() == 0)
   {
+    scheduleTianApiFailure("TianAPI request failed; preserving previous lunar display");
     return;
   }
 
-  // String URL = "https://apis.tianapi.com/lunar/index?key=" + TD_key;
-  String str = HTTPS_request("apis.tianapi.com", "/lunar/index", "key=" + TD_key);
-  mySerialPrintln("Obtaining Heavenly Stems and Earthly Branches information");
-  // 如果服务器响应OK则从服务器获取响应体信息并通过串口输出
-  if (str != "0" && str.length() != 0)
+  DynamicJsonDocument doc(2048);
+  const DeserializationError jsonError = deserializeJson(doc, str);
+  if (jsonError)
   {
-    DynamicJsonDocument doc(2048);
-    const DeserializationError jsonError = deserializeJson(doc, str);
-    if (jsonError)
-    {
-      mySerialPrint("Invalid TianAPI JSON: ");
-      mySerialPrintln(jsonError.c_str());
-      td_next_attempt_ms = millis() + 60UL * 1000UL;
-      return;
-    }
-    JsonObject sk = doc.as<JsonObject>();
-    int tdCode = sk["code"] | -1;
-    if (tdCode != 200 || sk["result"].isNull())
-    {
-      mySerialPrint("Request for Heavenly Stem and Earthly Branch Errors, code=");
-      mySerialPrintln(tdCode);
-      if (td_consecutive_failures < 255)
-        td_consecutive_failures++;
-
-      if (td_consecutive_failures >= TD_FAIL_FAST_RETRY_MAX)
-      {
-        td_consecutive_failures = 0;
-        td_next_attempt_ms = millis() + TD_SUCCESS_RETRY_MS;
-        mySerialPrintln("TianAPI failed 10 times continuously, waiting 30 minutes before retry");
-      }
-      else
-      {
-        td_next_attempt_ms = millis() + TD_FAIL_RETRY_MS;
-      }
-      return;
-    }
-
-    TD_gregoriandate = sk["result"]["gregoriandate"].as<String>();
-    splitDate(TD_gregoriandate, TD_gregoriandate_year, TD_gregoriandate_month, TD_gregoriandate_day);
-    TD_lunardate = sk["result"]["lunardate"].as<String>();
-    splitDate(TD_lunardate, TD_lunardate_year, TD_lunardate_month, TD_lunardate_day);
-    TD_year = sk["result"]["tiangandizhiyear"].as<String>();
-    TD_month = sk["result"]["tiangandizhimonth"].as<String>();
-    TD_day = sk["result"]["tiangandizhiday"].as<String>();
-    TD_animal = sk["result"]["shengxiao"].as<String>();
-    TD_animal = full_zodiac(TD_animal);
-    TD_lubarmonth = sk["result"]["lubarmonth"].as<String>();
-    TD_lunarday = sk["result"]["lunarday"].as<String>();
-    TD_jieqi = sk["result"]["jieqi"].as<String>();
-    mySerialPrintln("Get Success");
-    td_consecutive_failures = 0;
-    td_next_attempt_ms = millis() + TD_SUCCESS_RETRY_MS;
+    mySerialPrint("Invalid TianAPI JSON: ");
+    mySerialPrintln(jsonError.c_str());
+    scheduleTianApiFailure("TianAPI JSON rejected; preserving previous lunar display");
+    return;
   }
-  else
+
+  JsonObjectConst response = doc.as<JsonObjectConst>();
+  const int tdCode = response["code"] | -1;
+  JsonObjectConst result = response["result"].as<JsonObjectConst>();
+  if (tdCode != 200 || result.isNull())
   {
-    mySerialPrintln("Request for Heavenly Stem and Earthly Branch Errors");
-    if (td_consecutive_failures < 255)
-      td_consecutive_failures++;
-
-    if (td_consecutive_failures >= TD_FAIL_FAST_RETRY_MAX)
-    {
-      td_consecutive_failures = 0;
-      td_next_attempt_ms = millis() + TD_SUCCESS_RETRY_MS;
-      mySerialPrintln("TianAPI failed 10 times continuously, waiting 30 minutes before retry");
-    }
-    else
-    {
-      td_next_attempt_ms = millis() + TD_FAIL_RETRY_MS;
-    }
+    mySerialPrint("TianAPI business error, code=");
+    mySerialPrintln(tdCode);
+    scheduleTianApiFailure("TianAPI result rejected; preserving previous lunar display");
+    return;
   }
+
+  // Parse into temporary values. A partial response must never replace a
+  // complete, previously displayed lunar snapshot.
+  String nextGregorianDate;
+  String nextLunarDate;
+  String nextYear;
+  String nextMonth;
+  String nextDay;
+  String nextAnimal;
+  String nextLunarMonthName;
+  String nextLunarDayName;
+  String nextSolarTerm;
+  const bool fieldsValid =
+      readRequiredTianApiText(result, "gregoriandate", nextGregorianDate) &&
+      readRequiredTianApiText(result, "lunardate", nextLunarDate) &&
+      readRequiredTianApiText(result, "tiangandizhiyear", nextYear) &&
+      readRequiredTianApiText(result, "tiangandizhimonth", nextMonth) &&
+      readRequiredTianApiText(result, "tiangandizhiday", nextDay) &&
+      readRequiredTianApiText(result, "shengxiao", nextAnimal) &&
+      readRequiredTianApiText(result, "lubarmonth", nextLunarMonthName) &&
+      readRequiredTianApiText(result, "lunarday", nextLunarDayName) &&
+      readOptionalTianApiText(result, "jieqi", nextSolarTerm);
+  if (!fieldsValid)
+  {
+    scheduleTianApiFailure("TianAPI response is incomplete; preserving previous lunar display");
+    return;
+  }
+
+  String nextGregorianYear;
+  String nextGregorianMonth;
+  String nextGregorianDay;
+  String nextLunarYear;
+  String nextLunarMonth;
+  String nextLunarDay;
+  if (!sdd::isValidIsoDate(nextGregorianDate.c_str()) ||
+      !sdd::isValidIsoDate(nextLunarDate.c_str()))
+  {
+    scheduleTianApiFailure("TianAPI dates are malformed; preserving previous lunar display");
+    return;
+  }
+  splitDate(nextGregorianDate, nextGregorianYear, nextGregorianMonth, nextGregorianDay);
+  splitDate(nextLunarDate, nextLunarYear, nextLunarMonth, nextLunarDay);
+
+  TD_gregoriandate = nextGregorianDate;
+  TD_gregoriandate_year = nextGregorianYear;
+  TD_gregoriandate_month = nextGregorianMonth;
+  TD_gregoriandate_day = nextGregorianDay;
+  TD_lunardate = nextLunarDate;
+  TD_lunardate_year = nextLunarYear;
+  TD_lunardate_month = nextLunarMonth;
+  TD_lunardate_day = nextLunarDay;
+  TD_year = nextYear;
+  TD_month = nextMonth;
+  TD_day = nextDay;
+  TD_animal = full_zodiac(nextAnimal);
+  TD_lubarmonth = nextLunarMonthName;
+  TD_lunarday = nextLunarDayName;
+  TD_jieqi = nextSolarTerm;
+  td_consecutive_failures = 0;
+  td_next_attempt_ms = millis() + TD_SUCCESS_RETRY_MS;
+  lunarSnapshotRevision++;
+  mySerialPrintln("TianAPI lunar snapshot updated");
 }
 
-String scrollText[7];
-// int scrollTextWidth = 0;
-String strTDDate[5];
+constexpr size_t WEATHER_BANNER_COUNT = 6;
+constexpr size_t CALENDAR_BANNER_COUNT = 5;
+String scrollText[WEATHER_BANNER_COUNT];
+String strTDDate[CALENDAR_BANNER_COUNT];
+size_t currentIndex = 0;
+int weatherBannerActiveIndex = -1;
+int weatherBannerOffset = 0;
+
+bool hasCompleteLunarSnapshot()
+{
+  return TD_lunardate_year.length() > 0 && TD_animal.length() > 0 &&
+         TD_lubarmonth.length() > 0 && TD_lunarday.length() > 0 &&
+         TD_year.length() > 0 && TD_month.length() > 0 && TD_day.length() > 0;
+}
+
+String lunarUnavailableText()
+{
+  if (!isValidTianApiKey(TD_key))
+    return "农历未开";
+  if (strlen(TIANAPI_TLS_FINGERPRINT) == 0)
+    return "TLS未开";
+  return "农历未存";
+}
 
 // 天气信息写到屏幕上
 bool weatherData(const String &cityDZ, const String &dataSK, const String &dataFC)
@@ -1483,13 +1699,45 @@ bool weatherData(const String &cityDZ, const String &dataSK, const String &dataF
       deserializeJson(forecastDoc, dataFC))
     return false;
 
-  JsonObject sk = liveDoc.as<JsonObject>();
-  JsonObject dz = cityDoc.as<JsonObject>();
-  JsonObject fc = forecastDoc.as<JsonObject>();
-  if (!sk.containsKey("temp") || !sk.containsKey("SD") ||
-      !sk.containsKey("cityname") || !sk.containsKey("weathercode") ||
-      !dz.containsKey("weather") || !fc.containsKey("fd") || !fc.containsKey("fc"))
+  JsonObjectConst sk = liveDoc.as<JsonObjectConst>();
+  JsonObjectConst dz = cityDoc.as<JsonObjectConst>();
+  JsonObjectConst fc = forecastDoc.as<JsonObjectConst>();
+  String temperatureText;
+  String humidityText;
+  String cityName;
+  String liveWeather;
+  String weatherCodeText;
+  String forecastWeather;
+  String forecastLowText;
+  String forecastHighText;
+  String windDirection;
+  String windStrength;
+  int temperatureCelsius = 0;
+  int relativeHumidity = 0;
+  int weatherCode = 0;
+  int forecastLow = 0;
+  int forecastHigh = 0;
+  const bool requiredFieldsValid =
+      readRequiredJsonScalarText(sk, "temp", temperatureText) &&
+      readRequiredJsonScalarText(sk, "SD", humidityText) &&
+      readRequiredJsonString(sk, "cityname", cityName) &&
+      readRequiredJsonString(sk, "weather", liveWeather) &&
+      readRequiredJsonScalarText(sk, "weathercode", weatherCodeText) &&
+      readRequiredJsonString(dz, "weather", forecastWeather) &&
+      readRequiredJsonScalarText(fc, "fd", forecastLowText) &&
+      readRequiredJsonScalarText(fc, "fc", forecastHighText) &&
+      parseStrictInt(temperatureText, temperatureCelsius) &&
+      sdd::isValidTemperature(temperatureCelsius) &&
+      parseHumidityText(humidityText, relativeHumidity) &&
+      parseWeatherCodeText(weatherCodeText, weatherCode) &&
+      parseStrictInt(forecastLowText, forecastLow) && sdd::isValidTemperature(forecastLow) &&
+      parseStrictInt(forecastHighText, forecastHigh) && sdd::isValidTemperature(forecastHigh);
+  const bool optionalWindFieldsValid =
+      readOptionalJsonText(sk, "WD", windDirection) &&
+      readOptionalJsonText(sk, "WS", windStrength);
+  if (!requiredFieldsValid || !optionalWindFieldsValid)
     return false;
+  const bool hasWind = windDirection.length() > 0 && windStrength.length() > 0;
 
   // TFT_eSprite clkb = TFT_eSprite(&tft);
 
@@ -1498,14 +1746,18 @@ bool weatherData(const String &cityDZ, const String &dataSK, const String &dataF
   clk.loadFont(ZdyLwFont_20);
 
   // 温度
-  clk.createSprite(58, 24);
+  if (clk.createSprite(58, 24) == nullptr)
+  {
+    clk.unloadFont();
+    mySerialPrintln("Weather screen update skipped: sprite allocation failed");
+    return false;
+  }
   clk.fillSprite(bgColor);
   clk.setTextDatum(CC_DATUM);
   clk.setTextColor(TFT_WHITE, bgColor);
-  clk.drawString(sk["temp"].as<String>() + "℃", 28, 13);
+  clk.drawString(temperatureText + "℃", 28, 13);
   clk.pushSprite(100, 184);
   clk.deleteSprite();
-  const int temperatureCelsius = sk["temp"].as<int>();
   tempnum = sdd::temperatureBarWidth(temperatureCelsius);
   if (tempnum < 10)
     tempcol = 0x00FF;
@@ -1525,17 +1777,20 @@ bool weatherData(const String &cityDZ, const String &dataSK, const String &dataF
   tempWin();
 
   // 湿度
-  clk.createSprite(58, 24);
+  if (clk.createSprite(58, 24) == nullptr)
+  {
+    clk.unloadFont();
+    mySerialPrintln("Weather screen update skipped: sprite allocation failed");
+    return false;
+  }
   clk.fillSprite(bgColor);
   clk.setTextDatum(CC_DATUM);
   clk.setTextColor(TFT_WHITE, bgColor);
-  clk.drawString(sk["SD"].as<String>(), 28, 13);
+  clk.drawString(humidityText, 28, 13);
   // clk.drawString("100%",28,13);
   clk.pushSprite(100, 214);
   clk.deleteSprite();
-  // String A = sk["SD"].as<String>();
-  huminum = sk["SD"].as<String>().toInt();
-  huminum = constrain(huminum, 0, 100);
+  huminum = relativeHumidity;
 
   if (huminum > 90)
     humicol = 0x00FF;
@@ -1550,18 +1805,33 @@ bool weatherData(const String &cityDZ, const String &dataSK, const String &dataF
   humidityWin();
 
   // 城市名称
-  clk.createSprite(70, 30);
+  if (clk.createSprite(70, 30) == nullptr)
+  {
+    clk.unloadFont();
+    mySerialPrintln("Weather screen update skipped: sprite allocation failed");
+    return false;
+  }
   clk.fillSprite(bgColor);
   clk.setTextDatum(CC_DATUM);
   clk.setTextColor(TFT_WHITE, bgColor);
-  clk.drawString(sk["cityname"].as<String>(), 44, 16);
+  clk.drawString(cityName, 44, 16);
   clk.pushSprite(5, 15);
   clk.deleteSprite();
 
   // PM2.5空气指数
   uint16_t pm25BgColor = tft.color565(80, 80, 80);
   String aqiTxt = "未知";
-  int pm25V = sk["aqi"].isNull() ? -1 : sk["aqi"].as<int>();
+  int pm25V = -1;
+  if (!sk["aqi"].isNull())
+  {
+    String aqiValue;
+    if (readRequiredJsonScalarText(sk, "aqi", aqiValue))
+    {
+      int parsedAqi = -1;
+      if (parseStrictInt(aqiValue, parsedAqi) && parsedAqi >= 0)
+        pm25V = parsedAqi;
+    }
+  }
   const sdd::AqiLevel aqiLevel = sdd::classifyAqi(pm25V);
   const bool hasValidAqi = aqiLevel != sdd::AqiLevel::Unknown;
   switch (aqiLevel)
@@ -1585,7 +1855,12 @@ bool weatherData(const String &cityDZ, const String &dataSK, const String &dataF
   {
     aqiTxt = aqiTxt + " " + String(int(pm25V));
   }
-  clk.createSprite(85, 24);
+  if (clk.createSprite(85, 24) == nullptr)
+  {
+    clk.unloadFont();
+    mySerialPrintln("Weather screen update skipped: sprite allocation failed");
+    return false;
+  }
   clk.fillSprite(bgColor);
   clk.fillRoundRect(0, 0, 85, 24, 4, pm25BgColor);
   clk.setTextDatum(CC_DATUM);
@@ -1594,17 +1869,14 @@ bool weatherData(const String &cityDZ, const String &dataSK, const String &dataF
   clk.pushSprite(80, 18);
   clk.deleteSprite();
 
-  scrollText[0] = "实时天气 " + sk["weather"].as<String>();
-  scrollText[1] = "AQI " + aqiTxt;
-  scrollText[2] = "风向 " + sk["WD"].as<String>() + sk["WS"].as<String>();
-
-  // scrollText[6] = atoi((sk["weathercode"].as<String>()).substring(1,3).c_str()) ;
+  scrollText[0] = replaceUnsupportedGlyphs(clk, "天气 " + liveWeather);
+  scrollText[1] = replaceUnsupportedGlyphs(clk, "AQI " + aqiTxt);
+  scrollText[2] = hasWind
+                      ? replaceUnsupportedGlyphs(clk, "风向 " + windDirection + windStrength)
+                      : "";
 
   // 天气图标
-  String weatherCode = sk["weathercode"].as<String>();
-  if (weatherCode.length() > 0 && !isDigit(weatherCode[0]))
-    weatherCode.remove(0, 1);
-  wrat.draw(170, 15, weatherCode.toInt());
+  wrat.draw(170, 15, weatherCode);
 
   // 左上角滚动字幕
   // 解析第二段JSON
@@ -1613,10 +1885,12 @@ bool weatherData(const String &cityDZ, const String &dataSK, const String &dataF
   // String aa = "今日天气:" + dz["weather"].as<String>() + "，温度:最低" + dz["tempn"].as<String>() + "，最高" + dz["temp"].as<String>() + " 空气质量:" + aqiTxt + "，风向:" + dz["wd"].as<String>() + dz["ws"].as<String>();
   // scrollTextWidth = clk.textWidth(scrollText);
   // mySerialPrintln(aa);
-  scrollText[3] = "今日" + dz["weather"].as<String>();
-
-  scrollText[4] = "最低温度" + fc["fd"].as<String>() + "℃";
-  scrollText[5] = "最高温度" + fc["fc"].as<String>() + "℃";
+  scrollText[3] = replaceUnsupportedGlyphs(clk, "今日 " + forecastWeather);
+  scrollText[4] = replaceUnsupportedGlyphs(clk, "最低温度 " + forecastLowText + "℃");
+  scrollText[5] = replaceUnsupportedGlyphs(clk, "最高温度 " + forecastHighText + "℃");
+  currentIndex = 0;
+  weatherBannerActiveIndex = -1;
+  weatherBannerOffset = 0;
 
   // mySerialPrintln(scrollText[0]);
 
@@ -1624,36 +1898,54 @@ bool weatherData(const String &cityDZ, const String &dataSK, const String &dataF
   return true;
 }
 
-int currentIndex = 0;
 TFT_eSprite clkb = TFT_eSprite(&tft);
 
 void scrollBanner()
 {
-  // if(millis() - prevTime > 2333) //3秒切换一次
-  //  if(second()%2 ==0&& prevTime == 0)
-  //  {
-  if (scrollText[currentIndex])
+  int selected = weatherBannerActiveIndex;
+  if (selected < 0 || scrollText[selected].length() == 0)
+    selected = sdd::nextNonEmptyIndex(scrollText, WEATHER_BANNER_COUNT, currentIndex);
+  if (selected >= 0)
   {
     clkb.setColorDepth(8);
+    if (clkb.createSprite(150, 30) == nullptr)
+    {
+      mySerialPrintln("Weather banner skipped: sprite allocation failed");
+      return;
+    }
     clkb.loadFont(ZdyLwFont_20);
-    clkb.createSprite(150, 30);
     clkb.fillSprite(bgColor);
     clkb.setTextWrap(false);
-    clkb.setTextDatum(CC_DATUM);
     clkb.setTextColor(TFT_WHITE, bgColor);
-    clkb.drawString(scrollText[currentIndex], 74, 16);
+    const int textWidth = clkb.textWidth(scrollText[selected]);
+    const int maximumOffset = sdd::bannerMaximumOffset(textWidth, 150);
+    if (maximumOffset > 0)
+    {
+      clkb.setTextDatum(ML_DATUM);
+      clkb.drawString(scrollText[selected], -weatherBannerOffset, 15);
+    }
+    else
+    {
+      clkb.setTextDatum(CC_DATUM);
+      clkb.drawString(scrollText[selected], 74, 16);
+    }
     clkb.pushSprite(5, 45);
 
     clkb.deleteSprite();
     clkb.unloadFont();
-
-    if (currentIndex >= 5)
-      currentIndex = 0; // 回第一个
+    if (weatherBannerOffset < maximumOffset)
+    {
+      weatherBannerOffset = sdd::nextBannerOffset(weatherBannerOffset, maximumOffset, 75);
+      weatherBannerActiveIndex = selected;
+    }
     else
-      currentIndex += 1; // 准备切换到下一个
+    {
+      weatherBannerOffset = 0;
+      weatherBannerActiveIndex = -1;
+      currentIndex = (static_cast<size_t>(selected) + 1) % WEATHER_BANNER_COUNT;
+    }
   }
   prevTime = 1;
-  //  }
 }
 
 // 用快速线方法绘制数字
@@ -1697,9 +1989,62 @@ void drawLineFont(uint32_t _x, uint32_t _y, uint32_t _num, uint32_t _size, uint3
 int Hour_sign = 60;
 int Minute_sign = 60;
 int Second_sign = 60;
+int calendarTextYear = -1;
+int calendarTextMonth = -1;
+int calendarTextDay = -1;
+int calendarTextTimeStatus = -1;
+uint32_t renderedLunarSnapshotRevision = UINT32_MAX;
+
+void updateCalendarBannerText(bool force)
+{
+  const int currentTimeStatus = static_cast<int>(timeStatus());
+  const bool dateChanged = year() != calendarTextYear || month() != calendarTextMonth ||
+                           day() != calendarTextDay;
+  if (!force && !dateChanged && currentTimeStatus == calendarTextTimeStatus &&
+      renderedLunarSnapshotRevision == lunarSnapshotRevision)
+    return;
+
+  calendarTextYear = year();
+  calendarTextMonth = month();
+  calendarTextDay = day();
+  calendarTextTimeStatus = currentTimeStatus;
+  renderedLunarSnapshotRevision = lunarSnapshotRevision;
+
+  if (timeStatus() == timeSet)
+  {
+    strTDDate[0] = "公历 " + String(year()) + "年";
+    strTDDate[1] = monthDay() + " " + week();
+  }
+  else
+  {
+    // font_td_20 contains the ASCII glyphs used here; the previous Chinese
+    // error strings referenced glyphs that were not present in the font.
+    strTDDate[0] = "NTP WAIT";
+    strTDDate[1] = "";
+  }
+
+  const bool lunarReady = hasCompleteLunarSnapshot();
+  strTDDate[2] = lunarReady ? "农历 " + TD_lunardate_year + "年 " + TD_animal
+                            : lunarUnavailableText();
+  strTDDate[3] = "";
+  strTDDate[4] = "";
+  if (lunarReady)
+  {
+    // Use the numeric month from lunardate so 正/腊/闰 glyph omissions in the
+    // compact font cannot corrupt the page. L marks a leap lunar month.
+    if (TD_lubarmonth.startsWith("闰"))
+      strTDDate[3] = "L";
+    strTDDate[3] += TD_lunardate_month + "月 " + TD_lunarday;
+    if (TD_jieqi.length())
+      strTDDate[3] += " " + TD_jieqi;
+    strTDDate[4] = TD_year + " " + TD_month + " " + TD_day;
+  }
+}
+
 // 日期刷新
 void digitalClockDisplay(int reflash_en = 0)
 {
+  const bool forceRefresh = reflash_en == 1;
   // 时钟刷新,输入1强制刷新
   int now_hour = hour();     // 获取小时
   int now_minute = minute(); // 获取分钟
@@ -1730,39 +2075,56 @@ void digitalClockDisplay(int reflash_en = 0)
     Second_sign = now_second;
   }
 
-  if (reflash_en == 1)
-    reflash_en = 0;
-  /***日期****/
-  strTDDate[0] = timeStatus() == timeSet ? "公历 " + String(year()) + "年" : "时间尚未同步";
-  strTDDate[1] = timeStatus() == timeSet ? String(monthDay()) + " " + String(week()) : "等待网络同步";
-  strTDDate[2] = TD_lunardate_year.length() ? "农历 " + TD_lunardate_year + "年 " + TD_animal : "农历未配置";
-  strTDDate[3] = TD_lubarmonth.length() ? TD_lubarmonth + " " + TD_lunarday + " " + TD_jieqi : "";
-  strTDDate[4] = TD_year.length() ? TD_year + " " + TD_month + " " + TD_day : "";
-  /***日期****/
+  updateCalendarBannerText(forceRefresh);
 }
 
-int currentTDIndex = 0;
+size_t currentTDIndex = 0;
+int calendarBannerActiveIndex = -1;
+int calendarBannerOffset = 0;
 void TDBanner()
 {
-  if (strTDDate[currentTDIndex])
+  int selected = calendarBannerActiveIndex;
+  if (selected < 0 || strTDDate[selected].length() == 0)
+    selected = sdd::nextNonEmptyIndex(strTDDate, CALENDAR_BANNER_COUNT, currentTDIndex);
+  if (selected >= 0)
   {
     clk.setColorDepth(8);
+    if (clk.createSprite(150, 30) == nullptr)
+    {
+      mySerialPrintln("Calendar banner skipped: sprite allocation failed");
+      return;
+    }
     clk.loadFont(font_td_20);
-    clk.createSprite(150, 30);
     clk.fillSprite(bgColor);
     clk.setTextWrap(false);
-    clk.setTextDatum(CC_DATUM);
     clk.setTextColor(TFT_WHITE, bgColor);
-    clk.drawString(strTDDate[currentTDIndex], 74, 16);
+    const int textWidth = clk.textWidth(strTDDate[selected]);
+    const int maximumOffset = sdd::bannerMaximumOffset(textWidth, 150);
+    if (maximumOffset > 0)
+    {
+      clk.setTextDatum(ML_DATUM);
+      clk.drawString(strTDDate[selected], -calendarBannerOffset, 15);
+    }
+    else
+    {
+      clk.setTextDatum(CC_DATUM);
+      clk.drawString(strTDDate[selected], 74, 16);
+    }
     clk.pushSprite(5, 150);
 
     clk.deleteSprite();
     clk.unloadFont();
-
-    if (currentTDIndex >= 4)
-      currentTDIndex = 0; // 回第一个
+    if (calendarBannerOffset < maximumOffset)
+    {
+      calendarBannerOffset = sdd::nextBannerOffset(calendarBannerOffset, maximumOffset, 75);
+      calendarBannerActiveIndex = selected;
+    }
     else
-      currentTDIndex += 1; // 准备切换到下一个
+    {
+      calendarBannerOffset = 0;
+      calendarBannerActiveIndex = -1;
+      currentTDIndex = (static_cast<size_t>(selected) + 1) % CALENDAR_BANNER_COUNT;
+    }
   }
   prevTime = 1;
 }
@@ -1952,21 +2314,40 @@ void reflashBanner()
 // 所有需要联网后更新的方法都放在这里
 void WIFI_reflash_All()
 {
-  if (Wifi_en == 1)
+  if (Wifi_en != 1)
+    return;
+
+  switch (networkRefreshStage)
   {
-    if (WiFi.status() == WL_CONNECTED)
-    {
-      mySerialPrintln("WIFI connected");
+    case NetworkRefreshStage::WaitingForWifi:
+      if (WiFi.status() == WL_CONNECTED)
+      {
+        mySerialPrintln("WIFI connected");
+        networkRefreshStage = NetworkRefreshStage::SyncTime;
+      }
+      else if (wifiWakeStartedAt != 0 && millis() - wifiWakeStartedAt >= WIFI_CONNECT_TIMEOUT_MS)
+      {
+        mySerialPrintln("WIFI reconnect timed out; keeping cached display");
+        closeWifi();
+      }
+      break;
+    case NetworkRefreshStage::SyncTime:
       getNtpTime();
+      networkRefreshStage = NetworkRefreshStage::Weather;
+      break;
+    case NetworkRefreshStage::Weather:
       getCityWeather();
+      networkRefreshStage = NetworkRefreshStage::Lunar;
+      break;
+    case NetworkRefreshStage::Lunar:
       getTD();
+      networkRefreshStage = NetworkRefreshStage::Finish;
+      break;
+    case NetworkRefreshStage::Finish:
       closeWifi();
-    }
-    else if (wifiWakeStartedAt != 0 && millis() - wifiWakeStartedAt >= WIFI_CONNECT_TIMEOUT_MS)
-    {
-      mySerialPrintln("WIFI reconnect timed out; keeping cached display");
-      closeWifi();
-    }
+      break;
+    case NetworkRefreshStage::Idle:
+      break;
   }
 }
 
@@ -1983,6 +2364,7 @@ void openWifi()
     WiFi.begin();
   wifiWakeStartedAt = millis();
   Wifi_en = 1;
+  networkRefreshStage = NetworkRefreshStage::WaitingForWifi;
   WIFI_reflash_All();
 }
 
@@ -1994,6 +2376,7 @@ void closeWifi()
   mySerialPrintln("WIFI sleep......");
   Wifi_en = 0;
   wifiWakeStartedAt = 0;
+  networkRefreshStage = NetworkRefreshStage::Idle;
 }
 
 // 守护线程池
@@ -2110,6 +2493,7 @@ void setup()
   TJpgDec.drawJpg(15, 213, humidity, sizeof(humidity));       // 湿度图标
 
   getCityWeather();
+  getTD();
 #if DHT_EN
   if (DHT_img_flag != 0)
     IndoorTem();

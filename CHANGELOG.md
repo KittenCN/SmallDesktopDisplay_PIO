@@ -1,5 +1,29 @@
 # Changelog
 
+## 1.5.1 - 2026-08-03
+
+### Fixed
+
+- Fixed blank calendar frames after the lunar summary by selecting only non-empty carousel pages; the weather carousel now uses the same bounded state machine.
+- Added width-aware horizontal paging for calendar and weather banners so valid long text is no longer clipped by the 150-pixel viewport.
+- Rejected partial or incorrectly typed TianAPI results before updating any lunar display field, while keeping `jieqi` optional as documented by the provider.
+- Preserved the last complete lunar snapshot across network, JSON, business-code, and date-format failures.
+- Reported distinct unconfigured-key, unconfigured-TLS, and temporarily unavailable lunar states using only glyphs present in the compact calendar font.
+- Rendered lunar months numerically, with `L` for leap months, avoiding missing 正/腊/闰 glyphs in the compact font.
+- Rejected malformed weather values and missing/incorrectly typed required weather fields before drawing; wind remains an optional all-or-nothing page.
+- Replaced unsupported dynamic weather glyphs with a visible marker instead of silently dropping them.
+- Fetched lunar data during the first connected startup cycle instead of waiting for the next periodic refresh.
+- Handled every TFT sprite allocation failure without drawing through a null buffer; banner failures also preserve carousel state.
+
+### Changed
+
+- Replaced rapid TianAPI retry behavior with bounded exponential backoff from 1 to 16 minutes.
+- Split periodic NTP, weather, and lunar work into cooperative stages so UI tasks get control between blocking network operations.
+- Rebuild calendar `String` pages only when the date, time status, or lunar snapshot changes; replaced the per-refresh weekday `String` array with static text.
+- Released the DHT smooth font after each completed sensor frame to reduce retained heap pressure.
+- Added maximum-heap-block and heap-fragmentation diagnostics to serial status output.
+- Added executable native display-logic tests plus carousel, marquee, weather-range, and VLW glyph-coverage cases.
+
 ## 1.5.0 - 2026-08-02
 
 ### Added
