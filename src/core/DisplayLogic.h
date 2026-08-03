@@ -5,6 +5,7 @@
 #include <stdint.h>
 #include <cmath>
 #include <stdlib.h>
+#include <string.h>
 
 namespace sdd {
 
@@ -59,28 +60,43 @@ constexpr bool isValidWeatherCode(int value) {
   return value >= 0 && value <= 999;
 }
 
-inline bool isValidIsoDate(const char* value) {
-  if (value == nullptr || value[0] == '\0') {
+inline bool parseDateNumber(const char* begin, const char* end, int& result) {
+  if (begin == nullptr || end == nullptr || begin >= end) {
+    return false;
+  }
+  result = 0;
+  for (const char* cursor = begin; cursor < end; ++cursor) {
+    if (*cursor < '0' || *cursor > '9') {
+      return false;
+    }
+    result = result * 10 + *cursor - '0';
+  }
+  return true;
+}
+
+// TianAPI documents Gregorian dates as YYYY-MM-DD and lunar dates without
+// leading zeroes (for example YYYY-M-D), so accept both representations.
+inline bool isValidApiDate(const char* value) {
+  if (value == nullptr) {
+    return false;
+  }
+  const char* firstDash = strchr(value, '-');
+  const char* secondDash = firstDash == nullptr ? nullptr : strchr(firstDash + 1, '-');
+  const char* end = value + strlen(value);
+  if (firstDash == nullptr || secondDash == nullptr || firstDash - value != 4 ||
+      secondDash - firstDash < 2 || secondDash - firstDash > 3 ||
+      end - secondDash < 2 || end - secondDash > 3) {
     return false;
   }
 
-  for (size_t index = 0; index < 10; ++index) {
-    if (value[index] == '\0') {
-      return false;
-    }
-    if ((index == 4 || index == 7) ? value[index] != '-'
-                                   : value[index] < '0' || value[index] > '9') {
-      return false;
-    }
-  }
-  if (value[10] != '\0') {
+  int year = 0;
+  int month = 0;
+  int day = 0;
+  if (!parseDateNumber(value, firstDash, year) ||
+      !parseDateNumber(firstDash + 1, secondDash, month) ||
+      !parseDateNumber(secondDash + 1, end, day)) {
     return false;
   }
-
-  const int year = (value[0] - '0') * 1000 + (value[1] - '0') * 100 +
-                   (value[2] - '0') * 10 + value[3] - '0';
-  const int month = (value[5] - '0') * 10 + value[6] - '0';
-  const int day = (value[8] - '0') * 10 + value[9] - '0';
   if (year < 1970 || year > 2099 || month < 1 || month > 12 || day < 1) {
     return false;
   }

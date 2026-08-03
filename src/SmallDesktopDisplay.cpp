@@ -1654,8 +1654,8 @@ void getTD()
   String nextLunarYear;
   String nextLunarMonth;
   String nextLunarDay;
-  if (!sdd::isValidIsoDate(nextGregorianDate.c_str()) ||
-      !sdd::isValidIsoDate(nextLunarDate.c_str()))
+  if (!sdd::isValidApiDate(nextGregorianDate.c_str()) ||
+      !sdd::isValidApiDate(nextLunarDate.c_str()))
   {
     scheduleTianApiFailure("TianAPI dates are malformed; preserving previous lunar display");
     return;

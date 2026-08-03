@@ -8,6 +8,7 @@
 - Made live weather text, weather code, city name, wind, and AQI resilient to optional-field variation while retaining strict validation for required numeric data.
 - Replaced the disabled-by-default TianAPI TLS path with validation against the bundled DigiCert Global Root G2 and explicitly supplied the synchronized TimeLib UTC time to BearSSL; an explicitly configured leaf fingerprint still overrides the trust anchor.
 - Removed the misleading `TLS未开` display state. A configured API key now attempts secure root-validated TLS and preserves the previous snapshot on failure.
+- Accepted both padded Gregorian dates and TianAPI's documented non-padded lunar `YYYY-M-D` dates without weakening calendar-day validation.
 
 ### Added
 
