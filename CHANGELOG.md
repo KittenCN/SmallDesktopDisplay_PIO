@@ -23,6 +23,7 @@
 - Released the DHT smooth font after each completed sensor frame to reduce retained heap pressure.
 - Added maximum-heap-block and heap-fragmentation diagnostics to serial status output.
 - Added executable native display-logic tests plus carousel, marquee, weather-range, and VLW glyph-coverage cases.
+- Updated the official checkout and Python setup CI actions to their Node 24 releases.
 
 ## 1.5.0 - 2026-08-02
 
