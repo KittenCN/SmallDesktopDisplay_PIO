@@ -50,9 +50,9 @@ class DisplayFontCoverageTests(unittest.TestCase):
 
     def test_fixed_calendar_pages_and_statuses_are_supported(self):
         self.assert_calendar_text_supported(
-            "NTP WAIT TLS" "公历年月日周农历未开存" "L0123456789-"
+            "NTP WAIT" "公历年月日周农历未开存" "L0123456789-"
         )
-        for status in ("NTP WAIT", "农历未开", "TLS未开", "农历未存"):
+        for status in ("NTP WAIT", "农历未开", "农历未存"):
             self.assertLessEqual(self.calendar_width(status), 150)
 
     def test_all_dynamic_lunar_characters_are_supported(self):
@@ -71,6 +71,12 @@ class DisplayFontCoverageTests(unittest.TestCase):
     def test_replacement_glyph_exists_in_both_smooth_fonts(self):
         self.assertIn("-", self.calendar_glyphs)
         self.assertIn("-", self.weather_glyphs)
+
+    def test_weather_wait_fallback_is_supported(self):
+        missing = sorted(
+            {char for char in "WEATHER WAIT" if char != " " and char not in self.weather_glyphs}
+        )
+        self.assertEqual([], missing, f"missing weather fallback glyphs: {missing!r}")
 
 
 if __name__ == "__main__":

@@ -46,8 +46,9 @@
 #include "Animate/Animate.h"         //动画模块
 #include "font/font_td_20.h"         //字体库
 #include "core/DisplayLogic.h"       //纯逻辑与边界校验
+#include "core/TlsTrust.h"           //HTTPS根证书
 
-#define Version "SDD V1.5.1"
+#define Version "SDD V1.5.2"
 /* *****************************************************************
  *  配置使能位
  * *****************************************************************/
@@ -1444,13 +1445,25 @@ String HTTPS_request(String host, String url, String parameter = "", String fing
   }
 
   BearSSL::WiFiClientSecure client;
+  static BearSSL::X509List tianApiTrustAnchor(DIGICERT_GLOBAL_ROOT_G2);
   const String configuredFingerprint = fingerprint.length() ? fingerprint : String(TIANAPI_TLS_FINGERPRINT);
-  if (!configuredFingerprint.length())
+  if (configuredFingerprint.length())
+    client.setFingerprint(configuredFingerprint.c_str());
+  else
   {
-    mySerialPrintln("TianAPI skipped: TLS fingerprint is not configured");
-    return "0";
+    if (tianApiTrustAnchor.getCount() == 0)
+    {
+      mySerialPrintln("TianAPI TLS skipped: trust anchor allocation failed");
+      return "0";
+    }
+    if (timeStatus() == timeNotSet)
+    {
+      mySerialPrintln("TianAPI TLS skipped: certificate time is unavailable");
+      return "0";
+    }
+    client.setX509Time(now() - timeZone * SECS_PER_HOUR);
+    client.setTrustAnchors(&tianApiTrustAnchor);
   }
-  client.setFingerprint(configuredFingerprint.c_str());
 
   client.setBufferSizes(Receive_cache, 512);
   client.setTimeout(WEATHER_HTTP_TIMEOUT_MS);
@@ -1461,8 +1474,11 @@ String HTTPS_request(String host, String url, String parameter = "", String fing
   HTTPClient https;
   https.setTimeout(WEATHER_HTTP_TIMEOUT_MS);
   if (!https.begin(client, fullUrl))
+  {
+    mySerialPrintln("HTTPS request setup failed");
     return "0";
-  https.setUserAgent("SmallDesktopDisplay/1.5");
+  }
+  https.setUserAgent("SmallDesktopDisplay/1.5.2");
   const int httpCode = https.GET();
   String body = "0";
   if (httpCode == HTTP_CODE_OK)
@@ -1471,6 +1487,8 @@ String HTTPS_request(String host, String url, String parameter = "", String fing
   {
     mySerialPrint("HTTPS request failed, code=");
     mySerialPrintln(httpCode);
+    mySerialPrint("HTTPS error: ");
+    mySerialPrintln(https.errorToString(httpCode).c_str());
   }
   https.end();
   return body;
@@ -1571,7 +1589,10 @@ void getTD()
   if ((long)(nowMs - td_next_attempt_ms) < 0)
     return;
 
-  String str = HTTPS_request("apis.tianapi.com", "/lunar/index", "key=" + TD_key);
+  // The current TianAPI certificate chain is about 4.3 KiB. A 5 KiB receive
+  // buffer avoids TLS record truncation while remaining practical on ESP8266.
+  String str = HTTPS_request("apis.tianapi.com", "/lunar/index", "key=" + TD_key,
+                             "", 443, 5120);
   mySerialPrintln("Obtaining Heavenly Stems and Earthly Branches information");
   if (str == "0" || str.length() == 0)
   {
@@ -1665,7 +1686,7 @@ void getTD()
 
 constexpr size_t WEATHER_BANNER_COUNT = 6;
 constexpr size_t CALENDAR_BANNER_COUNT = 5;
-String scrollText[WEATHER_BANNER_COUNT];
+String scrollText[WEATHER_BANNER_COUNT] = {"WEATHER WAIT"};
 String strTDDate[CALENDAR_BANNER_COUNT];
 size_t currentIndex = 0;
 int weatherBannerActiveIndex = -1;
@@ -1682,8 +1703,6 @@ String lunarUnavailableText()
 {
   if (!isValidTianApiKey(TD_key))
     return "农历未开";
-  if (strlen(TIANAPI_TLS_FINGERPRINT) == 0)
-    return "TLS未开";
   return "农历未存";
 }
 
@@ -1712,31 +1731,50 @@ bool weatherData(const String &cityDZ, const String &dataSK, const String &dataF
   String forecastHighText;
   String windDirection;
   String windStrength;
-  int temperatureCelsius = 0;
+  float temperatureValue = 0.0f;
   int relativeHumidity = 0;
   int weatherCode = 0;
   int forecastLow = 0;
   int forecastHigh = 0;
-  const bool requiredFieldsValid =
-      readRequiredJsonScalarText(sk, "temp", temperatureText) &&
-      readRequiredJsonScalarText(sk, "SD", humidityText) &&
-      readRequiredJsonString(sk, "cityname", cityName) &&
-      readRequiredJsonString(sk, "weather", liveWeather) &&
-      readRequiredJsonScalarText(sk, "weathercode", weatherCodeText) &&
-      readRequiredJsonString(dz, "weather", forecastWeather) &&
-      readRequiredJsonScalarText(fc, "fd", forecastLowText) &&
-      readRequiredJsonScalarText(fc, "fc", forecastHighText) &&
-      parseStrictInt(temperatureText, temperatureCelsius) &&
-      sdd::isValidTemperature(temperatureCelsius) &&
-      parseHumidityText(humidityText, relativeHumidity) &&
-      parseWeatherCodeText(weatherCodeText, weatherCode) &&
-      parseStrictInt(forecastLowText, forecastLow) && sdd::isValidTemperature(forecastLow) &&
-      parseStrictInt(forecastHighText, forecastHigh) && sdd::isValidTemperature(forecastHigh);
-  const bool optionalWindFieldsValid =
-      readOptionalJsonText(sk, "WD", windDirection) &&
-      readOptionalJsonText(sk, "WS", windStrength);
-  if (!requiredFieldsValid || !optionalWindFieldsValid)
+  auto rejectWeatherField = [](const char *field) -> bool {
+    mySerialPrint("Weather field rejected: ");
+    mySerialPrintln(field);
     return false;
+  };
+
+  if (!readRequiredJsonScalarText(sk, "temp", temperatureText) ||
+      !sdd::parseStrictDecimal(temperatureText.c_str(), temperatureValue) ||
+      !sdd::isValidTemperature(temperatureValue))
+    return rejectWeatherField("temp");
+  if (!readRequiredJsonScalarText(sk, "SD", humidityText) ||
+      !parseHumidityText(humidityText, relativeHumidity))
+    return rejectWeatherField("SD");
+  if (!readRequiredJsonString(sk, "cityname", cityName) &&
+      !readRequiredJsonString(dz, "city", cityName))
+    return rejectWeatherField("cityname/city");
+  if (!readRequiredJsonString(dz, "weather", forecastWeather))
+    return rejectWeatherField("forecast weather");
+  if (!readOptionalJsonText(sk, "weather", liveWeather) || !liveWeather.length())
+    liveWeather = forecastWeather;
+  if (!readRequiredJsonScalarText(sk, "weathercode", weatherCodeText) &&
+      !readRequiredJsonScalarText(dz, "weathercode", weatherCodeText))
+    return rejectWeatherField("weathercode");
+  if (!parseWeatherCodeText(weatherCodeText, weatherCode))
+    return rejectWeatherField("weathercode value");
+  if (!readRequiredJsonScalarText(fc, "fd", forecastLowText) ||
+      !parseStrictInt(forecastLowText, forecastLow) || !sdd::isValidTemperature(forecastLow))
+    return rejectWeatherField("forecast low");
+  if (!readRequiredJsonScalarText(fc, "fc", forecastHighText) ||
+      !parseStrictInt(forecastHighText, forecastHigh) || !sdd::isValidTemperature(forecastHigh))
+    return rejectWeatherField("forecast high");
+
+  if (!readOptionalJsonText(sk, "WD", windDirection) ||
+      !readOptionalJsonText(sk, "WS", windStrength))
+  {
+    windDirection = "";
+    windStrength = "";
+    mySerialPrintln("Optional wind fields rejected; omitting wind page");
+  }
   const bool hasWind = windDirection.length() > 0 && windStrength.length() > 0;
 
   // TFT_eSprite clkb = TFT_eSprite(&tft);
@@ -1758,7 +1796,7 @@ bool weatherData(const String &cityDZ, const String &dataSK, const String &dataF
   clk.drawString(temperatureText + "℃", 28, 13);
   clk.pushSprite(100, 184);
   clk.deleteSprite();
-  tempnum = sdd::temperatureBarWidth(temperatureCelsius);
+  tempnum = sdd::temperatureBarWidth(static_cast<int>(temperatureValue));
   if (tempnum < 10)
     tempcol = 0x00FF;
   else if (tempnum < 28)

@@ -32,8 +32,8 @@
 #define WEATHER_HTTP_TIMEOUT_MS 10000
 #define DEFAULT_WEATHER_INTERVAL_MINUTES 10
 
-// TianAPI is disabled when this is empty. Set the current SHA-1 certificate
-// fingerprint to authenticate the server; never silently fall back to insecure TLS.
+// Optional TianAPI leaf-certificate SHA-1 pin. When empty, firmware validates
+// the server against the bundled DigiCert Global Root G2 trust anchor.
 #define TIANAPI_TLS_FINGERPRINT ""
 
 #endif

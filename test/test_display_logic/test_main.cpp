@@ -37,6 +37,20 @@ void test_weather_value_ranges() {
   TEST_ASSERT_FALSE(sdd::isValidWeatherCode(1000));
 }
 
+void test_decimal_temperature_parsing() {
+  float value = 0.0f;
+  TEST_ASSERT_TRUE(sdd::parseStrictDecimal("33.9", value));
+  TEST_ASSERT_FLOAT_WITHIN(0.001f, 33.9f, value);
+  TEST_ASSERT_TRUE(sdd::isValidTemperature(value));
+  TEST_ASSERT_TRUE(sdd::parseStrictDecimal("-12.5", value));
+  TEST_ASSERT_FLOAT_WITHIN(0.001f, -12.5f, value);
+  TEST_ASSERT_FALSE(sdd::parseStrictDecimal("33.9C", value));
+  TEST_ASSERT_FALSE(sdd::parseStrictDecimal("", value));
+  TEST_ASSERT_FALSE(sdd::parseStrictDecimal(nullptr, value));
+  TEST_ASSERT_TRUE(sdd::parseStrictDecimal("80.1", value));
+  TEST_ASSERT_FALSE(sdd::isValidTemperature(value));
+}
+
 void test_iso_date_validation() {
   TEST_ASSERT_TRUE(sdd::isValidIsoDate("2024-02-29"));
   TEST_ASSERT_TRUE(sdd::isValidIsoDate("2026-08-03"));
@@ -102,6 +116,7 @@ int run_display_logic_tests() {
   RUN_TEST(test_brightness_validation_and_pwm_mapping);
   RUN_TEST(test_persisted_setting_ranges);
   RUN_TEST(test_weather_value_ranges);
+  RUN_TEST(test_decimal_temperature_parsing);
   RUN_TEST(test_iso_date_validation);
   RUN_TEST(test_bar_widths_are_clamped);
   RUN_TEST(test_aqi_boundaries_follow_the_chinese_index);

@@ -1,6 +1,6 @@
 # SmallDesktopDisplay
 
-基于 ESP8266 NodeMCU 与 240 × 240 ST7789 彩屏的桌面天气时钟固件。当前版本为 **SDD 1.5.1**，使用 Arduino 框架和 PlatformIO 构建。
+基于 ESP8266 NodeMCU 与 240 × 240 ST7789 彩屏的桌面天气时钟固件。当前版本为 **SDD 1.5.2**，使用 Arduino 框架和 PlatformIO 构建。
 
 本项目最初基于 [chuxin520922/SmallDesktopDisplay](https://github.com/chuxin520922/SmallDesktopDisplay) 修改，并保留了原作者及历次贡献者署名。
 
@@ -49,7 +49,7 @@
 
 - 时间：`ntp.aliyun.com`、`ntp.tencent.com`、`pool.ntp.org`。固件验证响应来源、NTP 模式、stratum、时间范围和请求 cookie，不再接受明文 HTTP 时间降级。
 - 天气与城市：weather.com.cn 的 HTTP 接口。该接口不提供 TLS，因此天气数据没有传输完整性保证；失败或格式变化时保留已有画面。
-- 农历：`apis.tianapi.com`。需要 32 字符 API key，并在 `src/config.h` 设置当前证书 SHA-1 指纹 `TIANAPI_TLS_FINGERPRINT`。指纹为空或不匹配时功能保持关闭，固件不会退回不安全 TLS。响应会先完成字段、类型和日期校验，再原子替换显示快照；节气允许为空。
+- 农历：`apis.tianapi.com`。需要 32 字符 API key。固件默认使用内置 DigiCert Global Root G2 验证服务器证书；`TIANAPI_TLS_FINGERPRINT` 可选填叶证书 SHA-1 指纹以覆盖为更严格的固定证书校验。两种模式都不会退回不安全 TLS。响应会先完成字段、类型和日期校验，再原子替换显示快照；节气允许为空。
 - Wi-Fi 密码和 API key 存储于 ESP8266 EEPROM 模拟区，未做静态加密；具备芯片物理访问能力的人员仍可能读取。串口日志不会输出这些秘密。
 - 配网热点当前不设密码，但使用设备唯一 SSID 且仅在连接失败时限时开放。请在可信环境中完成首次配置。
 
@@ -81,7 +81,7 @@ pio device monitor -b 115200
 | `WEB_CONFIG_ENABLED` | `1` | `1` 使用 WiFiManager，`0` 使用 SmartConfig |
 | `DHT_ENABLED` | `0` | 是否编译 DHT11 室内温湿度功能 |
 | `DEFAULT_WEATHER_INTERVAL_MINUTES` | `10` | EEPROM 尚无有效值时的更新周期 |
-| `TIANAPI_TLS_FINGERPRINT` | 空 | TianAPI 当前证书 SHA-1 指纹；空值会安全禁用农历请求 |
+| `TIANAPI_TLS_FINGERPRINT` | 空 | 可选的 TianAPI 叶证书 SHA-1 指纹；空值使用内置 DigiCert 根证书验证 |
 
 ## 串口命令
 
@@ -108,6 +108,7 @@ pio device monitor -b 115200
 
 ```powershell
 python -B -m unittest discover -s tools/font_translate/tests -v
+python -B -m unittest discover -s test/host -v
 ```
 
 安装了本机 C++ 编译器时，可实际执行不依赖硬件的显示逻辑断言：
@@ -146,6 +147,7 @@ src/Animate/                 动画播放器、资源和生成工具
 src/weatherNum/              天气代码到图标的映射
 src/font/                    自定义字体资源
 test/test_display_logic/     Unity 边界测试
+test/host/                    固件证书与静态资源完整性测试
 tools/font_translate/        字体转换工具及 Python 单元测试
 ```
 

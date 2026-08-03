@@ -32,6 +32,7 @@ jobs:
           python-version: "3.12"
       - run: python -m pip install platformio==6.1.18
       - run: python -B -m unittest discover -s tools/font_translate/tests -v
+      - run: python -B -m unittest discover -s test/host -v
       - run: pio test -e native_test
       - run: pio test -e esp12e_test --without-uploading --without-testing
       - name: Reject tracked build products

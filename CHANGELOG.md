@@ -1,5 +1,20 @@
 # Changelog
 
+## 1.5.2 - 2026-08-03
+
+### Fixed
+
+- Accepted decimal live temperatures returned by weather.com.cn (for example `33.9`) instead of rejecting the complete weather snapshot and leaving the top, temperature, and humidity areas blank.
+- Made live weather text, weather code, city name, wind, and AQI resilient to optional-field variation while retaining strict validation for required numeric data.
+- Replaced the disabled-by-default TianAPI TLS path with validation against the bundled DigiCert Global Root G2 and explicitly supplied the synchronized TimeLib UTC time to BearSSL; an explicitly configured leaf fingerprint still overrides the trust anchor.
+- Removed the misleading `TLS未开` display state. A configured API key now attempts secure root-validated TLS and preserves the previous snapshot on failure.
+
+### Added
+
+- Added native decimal-temperature regression coverage and a SHA-256 integrity test for the bundled official TLS root certificate.
+- Added field-specific serial diagnostics for rejected weather responses.
+- Added a font-verified `WEATHER WAIT` first-start banner and detailed HTTPS failure diagnostics.
+
 ## 1.5.1 - 2026-08-03
 
 ### Fixed

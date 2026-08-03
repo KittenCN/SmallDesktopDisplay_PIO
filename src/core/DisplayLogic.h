@@ -3,6 +3,8 @@
 
 #include <stddef.h>
 #include <stdint.h>
+#include <cmath>
+#include <stdlib.h>
 
 namespace sdd {
 
@@ -34,6 +36,19 @@ constexpr bool isValidCityCode(uint32_t value) {
 
 constexpr bool isValidTemperature(int value) {
   return value >= -80 && value <= 80;
+}
+
+constexpr bool isValidTemperature(float value) {
+  return value >= -80.0f && value <= 80.0f;
+}
+
+inline bool parseStrictDecimal(const char* text, float& value) {
+  if (text == nullptr || text[0] == '\0') {
+    return false;
+  }
+  char* end = nullptr;
+  value = strtof(text, &end);
+  return end != text && *end == '\0' && std::isfinite(value);
 }
 
 constexpr bool isValidHumidity(int value) {
