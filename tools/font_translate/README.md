@@ -53,6 +53,22 @@ python tools/font_translate/font_translate.py txt2hzk `
 
 生成数组按字符列表去重后的顺序连续存储，每个字形占 `ceil(width / 8) * height` 字节。
 
+## 无损精简 TFT_eSPI VLW 字体
+
+`subset-vlw` 从现有 Processing/TFT_eSPI VLW header 中只保留字符清单指定的字形。工具不会重新栅格化：选中字形的 28 字节 metrics、逐像素 alpha bitmap、原始顺序和字体 footer 都逐字节保留，仅更新字形数量。
+
+日历字体使用仓库内的明确字符契约重新生成：
+
+```powershell
+python tools/font_translate/font_translate.py subset-vlw `
+  --input src/font/font_td_20.h `
+  --chars src/font/font_td_20_chars.txt `
+  --out src/font/font_td_20.h `
+  --array font_td_20
+```
+
+命令会拒绝源字体缺字、重复/非 BMP 码点、截断 bitmap，以及超出 TFT_eSPI 实际整数范围的字形度量。普通空格、Tab 和换行只作为清单排版字符忽略；其他 Unicode 空白不会被静默删除。CI 还要求生成字体的实际字形集合与 manifest 完全相等。
+
 ## 从注释提取字符
 
 ```powershell

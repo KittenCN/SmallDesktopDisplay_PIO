@@ -48,7 +48,7 @@
 #include "core/DisplayLogic.h"       //纯逻辑与边界校验
 #include "core/TlsTrust.h"           //HTTPS根证书
 
-#define Version "SDD V1.5.2"
+#define Version "SDD V1.5.3"
 /* *****************************************************************
  *  配置使能位
  * *****************************************************************/
@@ -159,7 +159,6 @@ uint16_t bgColor = 0x0000;
 int LCD_Rotation = 0;        // LCD屏幕方向
 int LCD_BL_PWM = 50;         // 屏幕亮度0-100，默认50
 uint8_t Wifi_en = 1;         // WIFI模块启动  1：打开    0：关闭
-int prevTime = 0;            // 滚动显示更新标志位
 int DHT_img_flag = 0;        // DHT传感器使用标志位
 
 // EEPROM参数存储地址位
@@ -248,8 +247,7 @@ String monthDay()
  *  函数
  * *****************************************************************/
 bool enter_flag = 1;
-template <typename T>
-void mySerialPrint(T content) {
+void printLogPrefix() {
     if (enter_flag == 1){
       unsigned long currentTime = millis();
       unsigned long hours = currentTime / 3600000;
@@ -264,36 +262,17 @@ void mySerialPrint(T content) {
       Serial.print("------>");
       enter_flag = 0;
     }
+}
+
+template <typename T>
+void mySerialPrint(const T &content) {
+    printLogPrefix();
     Serial.print(content);
 }
 
 template <typename T>
-void mySerialPrint(T content, int num) {
-    if (enter_flag == 1){
-      unsigned long currentTime = millis();
-      unsigned long hours = currentTime / 3600000;
-      unsigned long mins = (currentTime % 3600000) / 60000;
-      unsigned long secs = ((currentTime % 3600000) % 60000) / 1000;
-      Serial.print("Current time: ");
-      Serial.print(hours);
-      Serial.print(":");
-      Serial.print(mins);
-      Serial.print(":");
-      Serial.print(secs);
-      Serial.print("------>");
-      enter_flag = 0;
-    }
-    Serial.print(content, num);
-}
-
-template <typename T>
-void mySerialPrintln(T content) {
+void mySerialPrintln(const T &content) {
     mySerialPrint(content);
-    Serial.println();
-    enter_flag = 1;
-}
-
-void mySerialPrintln() {
     Serial.println();
     enter_flag = 1;
 }
@@ -1478,7 +1457,7 @@ String HTTPS_request(String host, String url, String parameter = "", String fing
     mySerialPrintln("HTTPS request setup failed");
     return "0";
   }
-  https.setUserAgent("SmallDesktopDisplay/1.5.2");
+  https.setUserAgent("SmallDesktopDisplay/1.5.3");
   const int httpCode = https.GET();
   String body = "0";
   if (httpCode == HTTP_CODE_OK)
@@ -1494,14 +1473,8 @@ String HTTPS_request(String host, String url, String parameter = "", String fing
   return body;
 }
 
-String TD_gregoriandate;
-String TD_gregoriandate_year;
-String TD_gregoriandate_month;
-String TD_gregoriandate_day;
-String TD_lunardate;
 String TD_lunardate_year;
 String TD_lunardate_month;
-String TD_lunardate_day;
 String TD_year;
 String TD_month;
 String TD_day;
@@ -1533,31 +1506,6 @@ void scheduleTianApiFailure(const char *reason)
   const uint8_t failureIndex = td_consecutive_failures > 0 ? td_consecutive_failures - 1 : 0;
   const uint8_t exponent = failureIndex < 4 ? failureIndex : 4;
   td_next_attempt_ms = millis() + TD_FAIL_RETRY_BASE_MS * (1UL << exponent);
-}
-
-bool readRequiredTianApiText(JsonObjectConst result, const char *field, String &value)
-{
-  JsonVariantConst candidate = result[field];
-  if (!candidate.is<const char *>())
-    return false;
-  value = candidate.as<const char *>();
-  value.trim();
-  return value.length() > 0;
-}
-
-bool readOptionalTianApiText(JsonObjectConst result, const char *field, String &value)
-{
-  JsonVariantConst candidate = result[field];
-  if (candidate.isNull())
-  {
-    value = "";
-    return true;
-  }
-  if (!candidate.is<const char *>())
-    return false;
-  value = candidate.as<const char *>();
-  value.trim();
-  return true;
 }
 
 String full_zodiac(const String& zodiac){
@@ -1633,24 +1581,21 @@ void getTD()
   String nextLunarDayName;
   String nextSolarTerm;
   const bool fieldsValid =
-      readRequiredTianApiText(result, "gregoriandate", nextGregorianDate) &&
-      readRequiredTianApiText(result, "lunardate", nextLunarDate) &&
-      readRequiredTianApiText(result, "tiangandizhiyear", nextYear) &&
-      readRequiredTianApiText(result, "tiangandizhimonth", nextMonth) &&
-      readRequiredTianApiText(result, "tiangandizhiday", nextDay) &&
-      readRequiredTianApiText(result, "shengxiao", nextAnimal) &&
-      readRequiredTianApiText(result, "lubarmonth", nextLunarMonthName) &&
-      readRequiredTianApiText(result, "lunarday", nextLunarDayName) &&
-      readOptionalTianApiText(result, "jieqi", nextSolarTerm);
+      readRequiredJsonString(result, "gregoriandate", nextGregorianDate) &&
+      readRequiredJsonString(result, "lunardate", nextLunarDate) &&
+      readRequiredJsonString(result, "tiangandizhiyear", nextYear) &&
+      readRequiredJsonString(result, "tiangandizhimonth", nextMonth) &&
+      readRequiredJsonString(result, "tiangandizhiday", nextDay) &&
+      readRequiredJsonString(result, "shengxiao", nextAnimal) &&
+      readRequiredJsonString(result, "lubarmonth", nextLunarMonthName) &&
+      readRequiredJsonString(result, "lunarday", nextLunarDayName) &&
+      readOptionalJsonText(result, "jieqi", nextSolarTerm);
   if (!fieldsValid)
   {
     scheduleTianApiFailure("TianAPI response is incomplete; preserving previous lunar display");
     return;
   }
 
-  String nextGregorianYear;
-  String nextGregorianMonth;
-  String nextGregorianDay;
   String nextLunarYear;
   String nextLunarMonth;
   String nextLunarDay;
@@ -1660,17 +1605,10 @@ void getTD()
     scheduleTianApiFailure("TianAPI dates are malformed; preserving previous lunar display");
     return;
   }
-  splitDate(nextGregorianDate, nextGregorianYear, nextGregorianMonth, nextGregorianDay);
   splitDate(nextLunarDate, nextLunarYear, nextLunarMonth, nextLunarDay);
 
-  TD_gregoriandate = nextGregorianDate;
-  TD_gregoriandate_year = nextGregorianYear;
-  TD_gregoriandate_month = nextGregorianMonth;
-  TD_gregoriandate_day = nextGregorianDay;
-  TD_lunardate = nextLunarDate;
   TD_lunardate_year = nextLunarYear;
   TD_lunardate_month = nextLunarMonth;
-  TD_lunardate_day = nextLunarDay;
   TD_year = nextYear;
   TD_month = nextMonth;
   TD_day = nextDay;
@@ -1983,44 +1921,45 @@ void scrollBanner()
       currentIndex = (static_cast<size_t>(selected) + 1) % WEATHER_BANNER_COUNT;
     }
   }
-  prevTime = 1;
 }
 
 // 用快速线方法绘制数字
 void drawLineFont(uint32_t _x, uint32_t _y, uint32_t _num, uint32_t _size, uint32_t _color)
 {
-  uint32_t fontSize;
+  uint8_t fontSize;
   const LineAtom *fontOne;
   // 小号(9*14)
   if (_size == 1)
   {
-    fontOne = smallLineFont[_num];
-    fontSize = smallLineFont_size[_num];
+    fontOne = reinterpret_cast<const LineAtom *>(pgm_read_ptr(&smallLineFont[_num]));
+    fontSize = pgm_read_byte(&smallLineFont_size[_num]);
     // 绘制前清理字体绘制区域
     tft.fillRect(_x, _y, 9, 14, TFT_BLACK);
   }
   // 中号(18*30)
   else if (_size == 2)
   {
-    fontOne = middleLineFont[_num];
-    fontSize = middleLineFont_size[_num];
+    fontOne = reinterpret_cast<const LineAtom *>(pgm_read_ptr(&middleLineFont[_num]));
+    fontSize = pgm_read_byte(&middleLineFont_size[_num]);
     // 绘制前清理字体绘制区域
     tft.fillRect(_x, _y, 18, 30, TFT_BLACK);
   }
   // 大号(36*90)
   else if (_size == 3)
   {
-    fontOne = largeLineFont[_num];
-    fontSize = largeLineFont_size[_num];
+    fontOne = reinterpret_cast<const LineAtom *>(pgm_read_ptr(&largeLineFont[_num]));
+    fontSize = pgm_read_byte(&largeLineFont_size[_num]);
     // 绘制前清理字体绘制区域
     tft.fillRect(_x, _y, 36, 90, TFT_BLACK);
   }
   else
     return;
 
-  for (uint32_t i = 0; i < fontSize; i++)
+  for (uint8_t i = 0; i < fontSize; i++)
   {
-    tft.drawFastHLine(fontOne[i].xValue + _x, fontOne[i].yValue + _y, fontOne[i].lValue, _color);
+    LineAtom atom;
+    memcpy_P(&atom, &fontOne[i], sizeof(atom));
+    tft.drawFastHLine(atom.xValue + _x, atom.yValue + _y, atom.lValue, _color);
   }
 }
 
@@ -2164,7 +2103,6 @@ void TDBanner()
       currentTDIndex = (static_cast<size_t>(selected) + 1) % CALENDAR_BANNER_COUNT;
     }
   }
-  prevTime = 1;
 }
 
 /*-------- NTP code ----------*/
@@ -2335,7 +2273,6 @@ void wifi_reset(Button2 &btn)
 void reflashTime()
 {
   digitalClockDisplay();
-  prevTime = 0;
 }
 
 // 切换天气 or 空气质量
@@ -2508,10 +2445,6 @@ void setup()
   Udp.begin(localPort);
   mySerialPrintln("Synchronizing time...");
   getNtpTime();
-
-  TJpgDec.setJpgScale(1);
-  TJpgDec.setSwapBytes(true);
-  TJpgDec.setCallback(tft_output);
 
   long CityCODE = 0;
   for (int cnum = 5; cnum > 0; cnum--)

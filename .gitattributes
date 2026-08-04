@@ -1,0 +1,3 @@
+# Preserve the pinned upstream decoder core byte-for-byte, including its whitespace.
+lib/TJpg_Decoder_ArrayOnly/src/tjpgd.c -whitespace
+lib/TJpg_Decoder_ArrayOnly/src/tjpgd.h -whitespace

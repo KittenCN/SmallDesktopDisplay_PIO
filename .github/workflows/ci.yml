@@ -15,6 +15,8 @@ jobs:
           - esp12e_smartconfig
           - esp12e_dht
           - esp12e_no_animation
+          - esp12e_astronaut
+          - esp12e_hutao
     steps:
       - uses: actions/checkout@v5
       - uses: actions/setup-python@v6
@@ -22,6 +24,14 @@ jobs:
           python-version: "3.12"
       - run: python -m pip install platformio==6.1.18
       - run: pio run -e ${{ matrix.environment }}
+      - name: Enforce default firmware size budget
+        if: matrix.environment == 'esp12e'
+        shell: bash
+        run: |
+          actual=$(stat -c%s .pio/build/esp12e/firmware.bin)
+          maximum=925000
+          echo "firmware.bin: ${actual} bytes (budget ${maximum})"
+          test "${actual}" -le "${maximum}"
 
   tests:
     runs-on: ubuntu-latest

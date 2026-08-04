@@ -1,5 +1,24 @@
 # Changelog
 
+## 1.5.3 - 2026-08-04
+
+### Changed
+
+- Reduced the calendar VLW font from 245 to the exact 100-glyph runtime manifest while preserving every retained metric, bitmap, footer byte, spacing metric, and replacement glyph. The font payload fell from 69,384 B to 32,900 B.
+- Replaced dynamically constructed clock line atoms with byte-identical POD tables in `PROGMEM`; all 1,333 drawing triples are protected by a canonical SHA-256 regression test.
+- Pinned an array-only TJpg_Decoder 1.1.0 variant. The Tiny JPEG core is byte-identical to upstream, while unused LittleFS/SPIFFS/SD members, overloads, and dependencies are no longer linked.
+- Stopped forcing unused newlib float `printf`/`scanf` implementations into the image; actual references would still be resolved normally.
+- Removed dead lunar snapshot strings, duplicate JSON helper implementations, duplicate JPEG setup calls, unused banner state, and repeated serial log-prefix template bodies.
+
+### Added
+
+- Added strict VLW parser limits matching TFT_eSPI, an explicit calendar glyph manifest, exact font/clock asset checks, and validation for all 71 bundled JPEG frames.
+- Added compile targets for the astronaut and Hu Tao animation variants and a 925,000 B default `firmware.bin` CI budget.
+
+### Validation
+
+- Default ESP8266 build changed from 983,012 B Flash / 47,624 B RAM to 907,464 B Flash / 41,760 B RAM: 75,548 B less Flash and 5,864 B less static RAM, with EEPROM, display, network, TLS, serial, button, and feature semantics unchanged.
+
 ## 1.5.2 - 2026-08-03
 
 ### Fixed

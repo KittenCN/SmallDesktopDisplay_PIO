@@ -2,6 +2,7 @@ from __future__ import annotations
 
 import importlib.util
 import subprocess
+import struct
 import sys
 import tempfile
 import unittest
@@ -143,6 +144,68 @@ class HzkGenerationTests(unittest.TestCase):
             with self.assertRaisesRegex(ValueError, "无法生成"):
                 font_translate.build_h_from_hzk(str(hzk), str(chars), str(output))
             self.assertFalse(output.exists())
+
+
+class VlwSubsetTests(unittest.TestCase):
+    @staticmethod
+    def _sample_vlw() -> bytes:
+        header = struct.pack(">6I", 2, 11, 20, 0, 16, 5)
+        first = struct.pack(">7I", ord("!"), 2, 1, 10, 15, 3, 0)
+        second = struct.pack(">7I", ord("中"), 1, 2, 20, 17, 0, 0)
+        return header + first + second + b"\x11\x12" + b"\x21\x22" + b"footer"
+
+    def test_subset_preserves_selected_metrics_bitmap_and_footer(self) -> None:
+        compact = font_translate.subset_vlw(self._sample_vlw(), "中中")
+        self.assertEqual(struct.unpack(">I", compact[:4])[0], 1)
+        self.assertEqual(compact[4:24], self._sample_vlw()[4:24])
+        self.assertEqual(
+            compact[24:52],
+            struct.pack(">7I", ord("中"), 1, 2, 20, 17, 0, 0),
+        )
+        self.assertEqual(compact[52:], b"\x21\x22footer")
+
+    def test_missing_character_and_malformed_bitmap_are_rejected(self) -> None:
+        with self.assertRaisesRegex(ValueError, "缺少请求字形"):
+            font_translate.subset_vlw(self._sample_vlw(), "未")
+        with self.assertRaisesRegex(ValueError, "bitmap 被截断"):
+            font_translate.parse_vlw(self._sample_vlw()[:-8])
+
+    def test_tft_espi_field_limits_and_duplicates_are_rejected(self) -> None:
+        header = struct.pack(">6I", 1, 11, 20, 0, 16, 5)
+        non_bmp = struct.pack(">7I", 0x10000, 1, 1, 1, 1, 0, 0) + b"x"
+        too_wide = struct.pack(">7I", ord("A"), 1, 256, 1, 1, 0, 0)
+        with self.assertRaisesRegex(ValueError, "码点无效"):
+            font_translate.parse_vlw(header + non_bmp)
+        with self.assertRaisesRegex(ValueError, "尺寸超出"):
+            font_translate.parse_vlw(header + too_wide)
+
+        duplicate_header = struct.pack(">6I", 2, 11, 20, 0, 16, 5)
+        record = struct.pack(">7I", ord("A"), 1, 1, 1, 1, 0, 0)
+        with self.assertRaisesRegex(ValueError, "重复"):
+            font_translate.parse_vlw(duplicate_header + record + record + b"xx")
+        with self.assertRaisesRegex(ValueError, "没有字形"):
+            font_translate.parse_vlw(struct.pack(">6I", 0, 11, 20, 0, 16, 5))
+
+    def test_only_manifest_format_whitespace_is_ignored(self) -> None:
+        with self.assertRaisesRegex(ValueError, "缺少请求字形"):
+            font_translate.subset_vlw(self._sample_vlw(), "中\u3000")
+        with self.assertRaisesRegex(ValueError, "字符清单为空"):
+            font_translate.subset_vlw(self._sample_vlw(), " \t\r\n")
+
+    def test_subset_header_is_round_trip_parseable(self) -> None:
+        with tempfile.TemporaryDirectory() as temp_dir:
+            root = Path(temp_dir)
+            source = root / "source.h"
+            chars = root / "chars.txt"
+            output = root / "nested" / "font.h"
+            font_translate.write_c_header(str(source), self._sample_vlw(), "font")
+            chars.write_text("中", encoding="utf-8")
+            font_translate.subset_vlw_header(
+                str(source), str(chars), str(output), "font"
+            )
+            compact = font_translate.parse_c_header_array(str(output), "font")
+            self.assertEqual(struct.unpack(">I", compact[:4])[0], 1)
+            self.assertEqual(compact[52:], b"\x21\x22footer")
 
 
 class CliAndTextTests(unittest.TestCase):

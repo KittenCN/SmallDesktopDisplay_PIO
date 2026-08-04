@@ -1,4 +1,5 @@
 import re
+import hashlib
 import struct
 import unittest
 from pathlib import Path
@@ -77,6 +78,25 @@ class DisplayFontCoverageTests(unittest.TestCase):
             {char for char in "WEATHER WAIT" if char != " " and char not in self.weather_glyphs}
         )
         self.assertEqual([], missing, f"missing weather fallback glyphs: {missing!r}")
+
+    def test_calendar_font_exactly_matches_its_manifest(self):
+        manifest = (
+            REPOSITORY_ROOT / "src" / "font" / "font_td_20_chars.txt"
+        ).read_text(encoding="utf-8")
+        expected = {char for char in manifest if char not in " \t\r\n"}
+        self.assertEqual(expected, set(self.calendar_glyphs))
+
+        source = (REPOSITORY_ROOT / "src" / "font" / "font_td_20.h").read_text(
+            encoding="utf-8"
+        )
+        data = bytes(
+            int(value, 16) for value in re.findall(r"0x([0-9A-Fa-f]{2})", source)
+        )
+        self.assertEqual(32900, len(data))
+        self.assertEqual(
+            "bba51ad7402e3b1fc8b0d6bdc15d64695ae888e38ab063c2fd4235b77b168b17",
+            hashlib.sha256(data).hexdigest(),
+        )
 
 
 if __name__ == "__main__":

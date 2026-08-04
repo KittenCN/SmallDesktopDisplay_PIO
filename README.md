@@ -1,6 +1,6 @@
 # SmallDesktopDisplay
 
-基于 ESP8266 NodeMCU 与 240 × 240 ST7789 彩屏的桌面天气时钟固件。当前版本为 **SDD 1.5.2**，使用 Arduino 框架和 PlatformIO 构建。
+基于 ESP8266 NodeMCU 与 240 × 240 ST7789 彩屏的桌面天气时钟固件。当前版本为 **SDD 1.5.3**，使用 Arduino 框架和 PlatformIO 构建。
 
 本项目最初基于 [chuxin520922/SmallDesktopDisplay](https://github.com/chuxin520922/SmallDesktopDisplay) 修改，并保留了原作者及历次贡献者署名。
 
@@ -69,7 +69,9 @@ pio device monitor -b 115200
 - `.pio/build/esp12e/firmware.elf`：符号和调试信息；
 - `.pio/build/esp12e/firmware.hex`：由 `extra_script.py` 额外生成，供需要 Intel HEX 的烧录流程使用。
 
-当前默认构建约占 58% RAM、94% 应用分区 Flash。新增图片或字体前必须重新检查容量，避免超过 100%。
+当前默认构建使用 41,760 B RAM（51.0%）和 907,464 B 应用分区 Flash（86.9%），`firmware.bin` 为 911,616 B。相对 1.5.2 的同工具链基线减少 5,864 B RAM 和 75,548 B Flash。CI 对默认 `firmware.bin` 设置 925,000 B 上限；新增图片、字体或依赖前仍须重新检查容量。
+
+固件内的 JPEG 全部来自 `PROGMEM` 数组，因此项目固定使用 `lib/TJpg_Decoder_ArrayOnly`：Tiny JPEG 解码核心与上游 1.1.0 字节一致，只移除了从未使用的 LittleFS/SPIFFS/SD 文件接口。离线文件系统并不是本项目的固件功能。
 
 ## 编译选项
 
@@ -129,13 +131,15 @@ pio test -e esp12e_test --without-uploading --without-testing
 pio run -e esp12e_smartconfig
 pio run -e esp12e_dht
 pio run -e esp12e_no_animation
+pio run -e esp12e_astronaut
+pio run -e esp12e_hutao
 ```
 
 连接硬件后可去掉 `--without-testing` 并指定上传/测试串口，以实际执行 Unity 断言。发布前还应在真机检查屏幕颜色和旋转、背光、配网/重置、天气和 NTP 失败恢复、DHT、按钮，以及至少 24 小时的空闲堆和重连稳定性。本仓库的自动验证只能证明编译、纯逻辑边界和工具行为，不能替代真机验收。
 
 ## 字体与动画工具
 
-- [`tools/font_translate`](tools/font_translate/README.md)：安全解析 C 字节数组、提取字模、生成精简 HZK 头文件及字符去重。
+- [`tools/font_translate`](tools/font_translate/README.md)：安全解析 C 字节数组、提取字模、按字符清单无损精简 VLW/HZK 字体及字符去重。
 - [`src/Animate`](src/Animate/README.md)：从 GIF 确定性生成 JPEG 帧头文件；帧数和尺寸表由代码自动校验。
 
 ## 目录
@@ -146,6 +150,7 @@ src/core/                    可独立测试的边界与显示逻辑
 src/Animate/                 动画播放器、资源和生成工具
 src/weatherNum/              天气代码到图标的映射
 src/font/                    自定义字体资源
+lib/TJpg_Decoder_ArrayOnly/  固定版本的 PROGMEM 数组 JPEG 解码器
 test/test_display_logic/     Unity 边界测试
 test/host/                    固件证书与静态资源完整性测试
 tools/font_translate/        字体转换工具及 Python 单元测试
