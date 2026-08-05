@@ -52,3 +52,28 @@ jobs:
             echo "Generated files must not be committed"
             exit 1
           fi
+
+  simulator-windows:
+    runs-on: windows-latest
+    timeout-minutes: 30
+    steps:
+      - uses: actions/checkout@v5
+      - name: Build Windows simulator
+        shell: pwsh
+        run: .\tools\build_simulator.ps1 -Configuration Release -Clean
+      - name: Run deterministic simulator self-tests
+        shell: pwsh
+        run: .\tools\test_simulator.ps1 -Configuration Release -SkipBuild
+      - name: Verify tests did not rewrite tracked scenarios or assets
+        shell: pwsh
+        run: git diff --exit-code
+      - name: Package portable Windows simulator
+        shell: pwsh
+        run: .\tools\package_simulator.ps1 -Configuration Release -SkipBuild
+      - name: Upload portable simulator
+        uses: actions/upload-artifact@v4
+        with:
+          name: SmallDesktopDisplaySimulator-windows-x64
+          path: build/packages/SmallDesktopDisplaySimulator-*-windows-x64.zip
+          if-no-files-found: error
+          retention-days: 14

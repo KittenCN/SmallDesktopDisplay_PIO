@@ -1,0 +1,18 @@
+{
+  "name": "fixed-boundaries",
+  "hour": 23,
+  "minute": 59,
+  "second": 59,
+  "city": "Boundary",
+  "temperature_text": "-80",
+  "temperature_celsius": -80,
+  "humidity_text": "100%",
+  "relative_humidity": 100,
+  "aqi": 301,
+  "weather_code": 31,
+  "brightness": 100,
+  "rotation": 3,
+  "animation": "astronaut",
+  "animation_frame": 9,
+  "expected_fnv1a64": "3725670461bf784a"
+}

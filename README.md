@@ -73,6 +73,22 @@ pio device monitor -b 115200
 
 固件内的 JPEG 全部来自 `PROGMEM` 数组，因此项目固定使用 `lib/TJpg_Decoder_ArrayOnly`：Tiny JPEG 解码核心与上游 1.1.0 字节一致，只移除了从未使用的 LittleFS/SPIFFS/SD 文件接口。离线文件系统并不是本项目的固件功能。
 
+## Windows 原生界面模拟器
+
+仓库提供可交互的 Windows x64 原生模拟器，无需连接 ESP8266 即可预览 240 × 240 屏幕。模拟器直接复用固件中的天气/温湿度 JPEG、三套动画、LineAtom 数字字模、VLW 中文字体以及 AQI/温湿度边界逻辑；右侧控制面板可切换预置天气、亮度、旋转、动画、DHT、温度、湿度和 AQI。
+
+已安装 Visual Studio 的“使用 C++ 的桌面开发”工作负载后，在仓库根目录执行：
+
+```powershell
+.\tools\build_simulator.ps1 -Clean -Run
+.\tools\test_simulator.ps1 -SkipBuild
+.\tools\package_simulator.ps1 -SkipBuild
+```
+
+可执行文件位于 `build\simulator\bin\Release`，便携 ZIP 位于 `build\packages`。解压便携包后双击 `SmallDesktopDisplaySimulator.exe` 即可；`SDL3.dll` 需与 EXE 保持在同一目录。完整按键、命令行和模拟边界见 [`simulator/README.md`](simulator/README.md)。
+
+模拟器用于界面与资源回归，不模拟真实 Wi-Fi、HTTP/TLS、NTP、EEPROM/SPI/DHT 时序、背光 PWM 或 ESP8266 内存压力，因此不能替代真机验收。
+
 ## 编译选项
 
 编辑 `src/config.h`：
@@ -119,6 +135,12 @@ python -B -m unittest discover -s test/host -v
 pio test -e native_test
 ```
 
+Windows 模拟器还提供 MSVC `/W4 /WX` 构建、真实 JPEG 解码、固定场景 RGB565 哈希和便携包自检：
+
+```powershell
+.\tools\test_simulator.ps1
+```
+
 在没有连接开发板时，编译 Unity 测试固件但不上传、不等待串口：
 
 ```powershell
@@ -151,9 +173,11 @@ src/Animate/                 动画播放器、资源和生成工具
 src/weatherNum/              天气代码到图标的映射
 src/font/                    自定义字体资源
 lib/TJpg_Decoder_ArrayOnly/  固定版本的 PROGMEM 数组 JPEG 解码器
+simulator/                    Windows 原生界面模拟器、场景与确定性测试
 test/test_display_logic/     Unity 边界测试
 test/host/                    固件证书与静态资源完整性测试
 tools/font_translate/        字体转换工具及 Python 单元测试
+tools/*_simulator.ps1        Windows 模拟器构建、测试与便携打包脚本
 ```
 
 ## 许可证

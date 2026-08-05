@@ -1,0 +1,18 @@
+{
+  "name": "fixed-default",
+  "hour": 12,
+  "minute": 34,
+  "second": 56,
+  "city": "Shanghai",
+  "temperature_text": "26",
+  "temperature_celsius": 26,
+  "humidity_text": "65%",
+  "relative_humidity": 65,
+  "aqi": 42,
+  "weather_code": 1,
+  "brightness": 50,
+  "rotation": 0,
+  "animation": "miku",
+  "animation_frame": 0,
+  "expected_fnv1a64": "bf2aaa53c17d072c"
+}
