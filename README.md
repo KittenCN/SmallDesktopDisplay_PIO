@@ -73,6 +73,24 @@ pio device monitor -b 115200
 
 固件内的 JPEG 全部来自 `PROGMEM` 数组，因此项目固定使用 `lib/TJpg_Decoder_ArrayOnly`：Tiny JPEG 解码核心与上游 1.1.0 字节一致，只移除了从未使用的 LittleFS/SPIFFS/SD 文件接口。离线文件系统并不是本项目的固件功能。
 
+## macOS 开发环境
+
+Apple Silicon Mac 可使用 VS Code + PlatformIO IDE 编译固件，并使用 Xcode Command Line Tools 运行原生逻辑测试。
+
+1. 安装 VS Code、`platformio.platformio-ide` 和 Microsoft C/C++ 插件。PlatformIO IDE 自带隔离的 Core/Python，不需要再用系统 pip 安装 PlatformIO。
+2. 如果尚未安装 Apple 编译工具，运行 `xcode-select --install`。
+3. 用 VS Code 打开仓库根目录，等待 PlatformIO 完成依赖初始化。
+4. 在 PlatformIO 终端运行以下验证；普通终端也可使用 `~/.platformio/penv/bin/pio`。
+
+```sh
+pio run -e esp12e
+pio test -e native_test
+```
+
+上传前先通过 `pio device list` 确认 USB 串口，再运行 `pio run -e esp12e -t upload`。串口监视波特率为 115200；不要复制 Windows 的 COM 端口配置到 Mac。未出现 USB 串口时，先检查数据线和开发板 USB 芯片，再根据芯片厂商说明处理驱动。
+
+`.pio/` 和自动生成的 `.vscode/c_cpp_properties.json` 包含本机工具路径，不应跨电脑复制或提交。CMake 的自动配置建议关闭；本仓库的界面模拟器依赖 Windows GDI+ 和 MSVC，目前不能在 macOS 原生构建。
+
 ## Windows 原生界面模拟器
 
 仓库提供可交互的 Windows x64 原生模拟器，无需连接 ESP8266 即可预览 240 × 240 屏幕。模拟器直接复用固件中的天气/温湿度 JPEG、三套动画、LineAtom 数字字模、VLW 中文字体以及 AQI/温湿度边界逻辑；右侧控制面板可切换预置天气、亮度、旋转、动画、DHT、温度、湿度和 AQI。
